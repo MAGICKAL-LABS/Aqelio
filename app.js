@@ -23,6 +23,9 @@ const TASKS_KEY = "aqelio_tasks";
 const CATEGORIES_KEY = "aqelio_categories";
 const STATS_KEY = "aqelio_stats";
 const FIRED_REMINDERS_KEY = "aqelio_fired_reminders";
+const PROFILE_KEY = "aqelio_profile";
+const THEME_KEY = "aqelio_theme";
+const PREMIUM_KEY = "aqelio_premium"; // Local preview flag only; not secure purchase verification.
 
 
 let tasks = JSON.parse(
@@ -41,6 +44,14 @@ let stats = JSON.parse(
 let firedReminders = JSON.parse(
     localStorage.getItem(FIRED_REMINDERS_KEY) || "[]"
 );
+
+let profile = JSON.parse(
+    localStorage.getItem(PROFILE_KEY) ||
+    '{"name":"","color":"#078b91"}'
+);
+
+let darkMode =
+    localStorage.getItem(THEME_KEY) === "dark";
 
 
 /* =========================================================
@@ -101,6 +112,39 @@ const taskModal =
 
 const modalOverlay =
     document.getElementById("modal-overlay");
+
+const profileButton =
+    document.getElementById("profile-button");
+
+const profileModal =
+    document.getElementById("profile-modal");
+
+const profileOverlay =
+    document.getElementById("profile-overlay");
+
+const closeProfileButton =
+    document.getElementById("close-profile");
+
+const profileNameInput =
+    document.getElementById("profile-name");
+
+const profileColorInput =
+    document.getElementById("profile-color");
+
+const profileColorValue =
+    document.getElementById("profile-color-value");
+
+const profilePreview =
+    document.getElementById("profile-preview");
+
+const profilePreviewName =
+    document.getElementById("profile-preview-name");
+
+const darkModeToggle =
+    document.getElementById("dark-mode-toggle");
+
+const saveProfileButton =
+    document.getElementById("save-profile");
 
 
 const taskTitle =
@@ -223,6 +267,151 @@ function daysBetween(
     );
 }
 
+
+/* =========================================================
+   MISSING UI HELPERS (required during startup)
+   ========================================================= */
+
+function renderCurrentDate() {
+    const dateElement = document.getElementById("current-date");
+    if (!dateElement) return;
+    dateElement.textContent = new Date().toLocaleDateString(undefined, {
+        weekday: "long", month: "long", day: "numeric", year: "numeric"
+    });
+}
+
+function renderCategories() {
+    const container = document.getElementById("category-list");
+    if (!container) return;
+
+    container.innerHTML = "";
+    if (!categories.length) {
+        container.innerHTML = '<p class="form-help">No categories yet. Add one to organize your tasks.</p>';
+        selectedCategory = null;
+        return;
+    }
+
+    if (selectedCategory == null || !categories.some(category => String(category.id) === String(selectedCategory))) {
+        selectedCategory = categories[0].id;
+    }
+
+    categories.forEach(category => {
+        const row = document.createElement("div");
+        row.className = "category-item";
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "category-button" + (String(category.id) === String(selectedCategory) ? " selected" : "");
+        button.setAttribute("aria-pressed", String(String(category.id) === String(selectedCategory)));
+        button.innerHTML = `<span class="category-button-main"><span class="category-dot" style="background:${escapeHtml(category.color || "#078b91")}"></span><span>${escapeHtml(category.name)}</span></span><span class="category-selected-mark">${String(category.id) === String(selectedCategory) ? "✓" : ""}</span>`;
+        button.addEventListener("click", () => {
+            selectedCategory = category.id;
+            renderCategories();
+        });
+
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.className = "category-delete";
+        deleteButton.setAttribute("aria-label", `Delete ${category.name} category`);
+        deleteButton.title = `Delete ${category.name}`;
+        deleteButton.textContent = "×";
+        deleteButton.addEventListener("click", event => {
+            event.preventDefault();
+            event.stopPropagation();
+            deleteCategory(category.id);
+        });
+
+        row.append(button, deleteButton);
+        container.appendChild(row);
+    });
+}
+
+function deleteCategory(categoryId) {
+    const category = categories.find(item => String(item.id) === String(categoryId));
+    if (!category) return;
+
+    const categoryTasks = tasks.filter(task => String(task.categoryId) === String(categoryId));
+    const replacement = categories.find(item => String(item.id) !== String(categoryId));
+    const message = categoryTasks.length
+        ? `Delete the \"${category.name}\" category? ${categoryTasks.length} task(s) use it and will be moved to ${replacement ? `\"${replacement.name}\"` : "no category"}. This cannot be undone.`
+        : `Delete the \"${category.name}\" category? This cannot be undone.`;
+    if (!window.confirm(message)) return;
+
+    categories = categories.filter(item => String(item.id) !== String(categoryId));
+    tasks.forEach(task => {
+        if (String(task.categoryId) === String(categoryId)) {
+            task.categoryId = replacement ? replacement.id : null;
+        }
+    });
+    if (String(selectedCategory) === String(categoryId)) {
+        selectedCategory = replacement ? replacement.id : null;
+    }
+    saveCategories();
+    saveTasks();
+    renderCategories();
+    try { renderHome(); } catch (error) { console.error("Could not refresh tasks after deleting category:", error); }
+}
+
+function closeCategoryForm() {
+    if (categoryForm) categoryForm.classList.add("hidden");
+    if (categoryName) categoryName.value = "";
+    const colorInput = document.getElementById("new-category-color");
+    if (colorInput) colorInput.value = "#078b91";
+    const colorPreview = document.getElementById("new-category-color-preview");
+    if (colorPreview) colorPreview.style.background = "#078b91";
+    const colorValue = document.getElementById("new-category-color-value");
+    if (colorValue) colorValue.textContent = "#078B91";
+}
+
+function setupCategoryControls() {
+    const showButton = document.getElementById("show-category-form");
+    const cancelButton = document.getElementById("cancel-category");
+    const saveButton = document.getElementById("save-category");
+
+    showButton?.addEventListener("click", () => {
+        categoryForm?.classList.remove("hidden");
+        categoryName?.focus();
+    });
+    cancelButton?.addEventListener("click", closeCategoryForm);
+    saveButton?.addEventListener("click", () => {
+        const name = String(categoryName?.value || "").trim();
+        if (!name) {
+            categoryName?.focus();
+            return;
+        }
+        if (categories.some(category => category.name.toLowerCase() === name.toLowerCase())) {
+            alert("A category with that name already exists.");
+            return;
+        }
+        const colorInput = document.getElementById("new-category-color");
+        const color = /^#[0-9a-f]{6}$/i.test(colorInput?.value || "")
+            ? colorInput.value
+            : "#078b91";
+        const category = { id: createId(), name, color };
+        categories.push(category);
+        selectedCategory = category.id;
+        saveCategories();
+        closeCategoryForm();
+        renderCategories();
+    });
+}
+
+function setupDurationButtons() {
+    document.querySelectorAll(".duration-button[data-duration]").forEach(button => {
+        button.addEventListener("click", () => {
+            selectedDuration = Number(button.dataset.duration) || 25;
+            document.querySelectorAll(".duration-button[data-duration]").forEach(item => item.classList.toggle("selected", item === button));
+            if (customDuration) customDuration.value = "";
+        });
+    });
+    customDuration?.addEventListener("input", () => {
+        const value = Number(customDuration.value);
+        if (value > 0) {
+            selectedDuration = value;
+            document.querySelectorAll(".duration-button[data-duration]").forEach(item => item.classList.remove("selected"));
+        }
+    });
+}
 
 /* =========================================================
    STORAGE FUNCTIONS
@@ -365,59 +554,679 @@ function showScreen(name) {
 }
 
 
-navHome.addEventListener(
-    "click",
-    () => showScreen("home")
-);
-
-
-navCalendar.addEventListener(
-    "click",
-    () => showScreen("calendar")
-);
-
-
-navFocus.addEventListener(
-    "click",
-    () => showScreen("focus")
-);
-
-
-navStats.addEventListener(
-    "click",
-    () => showScreen("stats")
-);
+navHome?.addEventListener("click", () => showScreen("home"));
+navCalendar?.addEventListener("click", () => showScreen("calendar"));
+navFocus?.addEventListener("click", () => showScreen("focus"));
+navStats?.addEventListener("click", () => showScreen("stats"));
 
 
 /* =========================================================
-   CURRENT DATE
+   PROFILE + THEME
    ========================================================= */
 
-function renderCurrentDate() {
+function saveProfile() {
 
-    const element =
+    localStorage.setItem(
+        PROFILE_KEY,
+        JSON.stringify(profile)
+    );
+}
+
+
+function getProfileInitial() {
+
+    const name =
+        String(
+            profile.name || ""
+        ).trim();
+
+    return name
+        ? name.charAt(0).toUpperCase()
+        : "A";
+}
+
+
+function applyTheme() {
+
+    document.documentElement.dataset.theme =
+        darkMode
+            ? "dark"
+            : "light";
+
+
+    if (darkModeToggle) {
+
+        darkModeToggle.setAttribute(
+            "aria-checked",
+            String(darkMode)
+        );
+
+        darkModeToggle.classList.toggle(
+            "active",
+            darkMode
+        );
+
+    }
+
+
+    localStorage.setItem(
+        THEME_KEY,
+        darkMode
+            ? "dark"
+            : "light"
+    );
+}
+
+
+function renderProfile() {
+
+    const name =
+        String(
+            profile.name || ""
+        ).trim();
+
+    const color =
+        profile.color ||
+        "#078b91";
+
+    const initial =
+        getProfileInitial();
+
+
+    const avatar =
         document.getElementById(
-            "current-date"
+            "profile-button"
         );
 
 
-    if (!element) {
+    if (avatar) {
+
+        avatar.textContent =
+            initial;
+
+        avatar.style.setProperty(
+            "--profile-color",
+            color
+        );
+
+    }
+
+
+    const greeting =
+        document.querySelector(
+            "#home-screen .home-header h1"
+        );
+
+
+    if (greeting) {
+
+        greeting.textContent =
+            name
+                ? `Hello, ${name}`
+                : "Hello, there";
+
+    }
+
+
+    if (profilePreview) {
+
+        profilePreview.textContent =
+            initial;
+
+        profilePreview.style.setProperty(
+            "--profile-color",
+            color
+        );
+
+    }
+
+
+    if (profilePreviewName) {
+
+        profilePreviewName.textContent =
+            name
+                ? `Hello, ${name}`
+                : "Hello, there";
+
+    }
+
+}
+
+
+function updateProfilePreview() {
+
+    const name =
+        String(
+            profileNameInput?.value || ""
+        ).trim();
+
+    const color =
+        profileColorInput?.value ||
+        "#078b91";
+
+    const initial =
+        name
+            ? name.charAt(0).toUpperCase()
+            : "A";
+
+
+    if (profilePreview) {
+
+        profilePreview.textContent =
+            initial;
+
+        profilePreview.style.setProperty(
+            "--profile-color",
+            color
+        );
+
+    }
+
+
+    if (profilePreviewName) {
+
+        profilePreviewName.textContent =
+            name
+                ? `Hello, ${name}`
+                : "Hello, there";
+
+    }
+
+
+    if (profileColorValue) {
+
+        profileColorValue.textContent =
+            color;
+
+    }
+
+}
+
+
+function openProfile() {
+
+    if (!profileModal) {
 
         return;
 
     }
 
 
-    element.textContent =
-        new Date().toLocaleDateString(
-            undefined,
-            {
-                weekday: "long",
-                month: "long",
-                day: "numeric",
-                year: "numeric"
-            }
+    if (profileNameInput) {
+
+        profileNameInput.value =
+            profile.name || "";
+
+    }
+
+
+    if (profileColorInput) {
+
+        profileColorInput.value =
+            profile.color ||
+            "#078b91";
+
+    }
+
+
+    updateProfilePreview();
+
+    applyTheme();
+
+
+    profileModal.classList.add(
+        "active"
+    );
+
+}
+
+
+function closeProfile() {
+
+    if (!profileModal) {
+
+        return;
+
+    }
+
+
+    profileModal.classList.remove(
+        "active"
+    );
+
+}
+
+
+if (profileButton) {
+
+    profileButton.addEventListener(
+        "click",
+        openProfile
+    );
+
+}
+
+
+if (profileOverlay) {
+
+    profileOverlay.addEventListener(
+        "click",
+        closeProfile
+    );
+
+}
+
+
+if (closeProfileButton) {
+
+    closeProfileButton.addEventListener(
+        "click",
+        closeProfile
+    );
+
+}
+
+
+if (profileNameInput) {
+
+    profileNameInput.addEventListener(
+        "input",
+        updateProfilePreview
+    );
+
+}
+
+
+if (profileColorInput) {
+
+    profileColorInput.addEventListener(
+        "input",
+        updateProfilePreview
+    );
+
+}
+
+
+if (darkModeToggle) {
+
+    darkModeToggle.addEventListener(
+        "click",
+        () => {
+
+            darkMode =
+                !darkMode;
+
+            applyTheme();
+
+        }
+    );
+
+}
+
+
+if (saveProfileButton) {
+
+    saveProfileButton.addEventListener(
+        "click",
+        () => {
+
+            profile = {
+
+                name:
+                    String(
+                        profileNameInput?.value ||
+                        ""
+                    ).trim(),
+
+                color:
+                    profileColorInput?.value ||
+                    "#078b91"
+
+            };
+
+
+            darkMode =
+                Boolean(
+                    darkModeToggle?.classList.contains(
+                        "active"
+                    )
+                );
+
+
+            saveProfile();
+
+            applyTheme();
+
+            renderProfile();
+
+            closeProfile();
+
+        }
+    );
+
+}
+
+
+/* =========================================================
+   MODAL
+   ========================================================= */
+
+function openTaskModal(task = null) {
+    // Set the modal state first so an unrelated category/UI error cannot
+    // prevent the edit dialog from appearing.
+    editingTaskId = task ? task.id : null;
+
+    if (modalTitle) modalTitle.textContent = task ? "Edit task" : "Add task";
+    if (modalEyebrow) modalEyebrow.textContent = task ? "Update your task" : "Create a new task";
+    if (saveTaskButton) saveTaskButton.textContent = task ? "Save Changes" : "Add Task";
+
+    if (taskTitle) taskTitle.value = task?.title || "";
+    if (taskDate) taskDate.value = task?.date || selectedCalendarDate || formatDate(new Date());
+    if (taskTime) taskTime.value = task?.time || "";
+    if (taskReminder) taskReminder.value = task?.reminder || "none";
+    if (taskRepeat) taskRepeat.value = task?.repeat || "none";
+
+    selectedCategory = task?.categoryId || null;
+    selectedDuration = task?.duration || 25;
+    if (customDuration) customDuration.value = selectedDuration;
+    document.querySelectorAll(".duration-button[data-duration]").forEach(button => {
+        button.classList.toggle("selected", Number(button.dataset.duration) === Number(selectedDuration));
+    });
+
+    if (taskModal) taskModal.classList.add("active");
+
+    // These are presentation helpers; the edit modal should still open if one fails.
+    try { renderCategories(); } catch (error) { console.error("Could not render task categories:", error); }
+    try { setupRepeatUI(); } catch (error) { console.error("Could not set up repeat controls:", error); }
+}
+
+function closeTaskModal() {
+
+    if (taskModal) {
+
+        taskModal.classList.remove(
+            "active"
         );
+
+    }
+
+    editingTaskId =
+        null;
+
+}
+
+
+if (modalOverlay) {
+
+    modalOverlay.addEventListener(
+        "click",
+        closeTaskModal
+    );
+
+}
+
+const closeTaskModalButton = document.getElementById("close-modal");
+if (closeTaskModalButton) {
+    closeTaskModalButton.addEventListener("click", closeTaskModal);
+}
+
+// Delegated edit handler: works for task cards rendered now or later.
+document.addEventListener("click", event => {
+    const target = event.target instanceof Element
+        ? event.target
+        : event.target?.parentElement;
+    const editButton = target?.closest(".task-edit");
+    if (!editButton) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const card = editButton.closest(".task-card");
+    const taskId = card?.dataset.taskId;
+    const task = tasks.find(item => String(item.id) === String(taskId));
+
+    if (!task) {
+        console.error("Aqelio: could not find the task for this Edit button.", taskId);
+        return;
+    }
+
+    openTaskModal(task);
+}, true);
+
+/* =========================================================
+   FIXED ADD TASK BUTTONS
+   ========================================================= */
+
+function openAddTask(dateOverride = null) {
+
+    editingTaskId = null;
+
+    if (modalTitle) {
+        modalTitle.textContent = "Add a task";
+    }
+
+    if (modalEyebrow) {
+        modalEyebrow.textContent = "NEW TASK";
+    }
+
+    if (saveTaskButton) {
+        saveTaskButton.textContent = "Add Task";
+    }
+
+    if (taskTitle) {
+        taskTitle.value = "";
+    }
+
+    if (taskDate) {
+        taskDate.value =
+            dateOverride ||
+            selectedCalendarDate ||
+            formatDate(new Date());
+    }
+
+    if (taskTime) {
+        taskTime.value = "";
+    }
+
+    if (taskReminder) {
+        taskReminder.value = "none";
+    }
+
+    selectedCategory =
+        categories[0]?.id || null;
+
+    selectedDuration = 25;
+    document.querySelectorAll(".duration-button[data-duration]").forEach(button => {
+        button.classList.toggle("selected", Number(button.dataset.duration) === 25);
+    });
+
+    if (customDuration) {
+        customDuration.value = "";
+    }
+
+    const selectedDate =
+        taskDate?.value ||
+        formatDate(new Date());
+
+    const repeatSelect =
+        document.getElementById(
+            "task-repeat"
+        );
+
+    if (repeatSelect) {
+        repeatSelect.value = "none";
+    }
+
+    const intervalSelect =
+        document.getElementById(
+            "repeat-interval"
+        );
+
+    if (intervalSelect) {
+        intervalSelect.value = "1";
+    }
+
+    const daySelect =
+        document.getElementById(
+            "repeat-day"
+        );
+
+    if (daySelect) {
+        daySelect.value = String(
+            parseDate(
+                selectedDate
+            ).getDay()
+        );
+    }
+
+    if (
+        typeof updateRepeatControls ===
+        "function"
+    ) {
+        updateRepeatControls();
+    }
+
+    if (
+        typeof updateDurationButtons ===
+        "function"
+    ) {
+        updateDurationButtons();
+    }
+
+    if (
+        typeof renderCategories ===
+        "function"
+    ) {
+        renderCategories();
+    }
+
+    if (
+        typeof closeCategoryForm ===
+        "function"
+    ) {
+        closeCategoryForm();
+    }
+
+    if (taskModal) {
+        taskModal.classList.add(
+            "active"
+        );
+    }
+}
+
+
+/* =========================================================
+   ADD TASK BUTTONS
+   ========================================================= */
+
+const addTaskTop =
+    document.getElementById(
+        "add-task-top"
+    );
+
+const addTaskMain =
+    document.getElementById(
+        "add-task-main"
+    );
+
+const addTaskCalendar =
+    document.getElementById(
+        "add-task-calendar"
+    );
+
+
+if (addTaskTop) {
+
+    addTaskTop.addEventListener(
+        "click",
+        () => {
+
+            openAddTask(
+                formatDate(
+                    new Date()
+                )
+            );
+
+        }
+    );
+
+}
+
+
+if (addTaskMain) {
+
+    addTaskMain.addEventListener(
+        "click",
+        () => {
+
+            // The center Add button follows the selected calendar date
+            // only while Calendar is open. From Home, create today's task.
+            const dateForNewTask =
+                screens.calendar?.classList.contains("active")
+                    ? (selectedCalendarDate || formatDate(new Date()))
+                    : formatDate(new Date());
+
+            openAddTask(dateForNewTask);
+
+        }
+    );
+
+}
+
+
+if (addTaskCalendar) {
+
+    addTaskCalendar.addEventListener(
+        "click",
+        () => {
+
+            openAddTask(
+                selectedCalendarDate ||
+                formatDate(
+                    new Date()
+                )
+            );
+
+        }
+    );
+
+}
+
+/* =========================================================
+   CATEGORY COLOR PICKER
+   ========================================================= */
+
+function setupCategoryColorPicker() {
+
+    const colorInput =
+        document.getElementById(
+            "new-category-color"
+        );
+
+
+    const colorPreview =
+        document.getElementById(
+            "new-category-color-preview"
+        );
+
+    const colorValue =
+        document.getElementById(
+            "new-category-color-value"
+        );
+
+    if (colorInput && colorPreview) {
+        const update = () => {
+            colorPreview.style.background = colorInput.value;
+            if (colorValue) {
+                colorValue.textContent = colorInput.value.toUpperCase();
+            }
+        };
+
+        colorInput.addEventListener("input", update);
+        colorInput.addEventListener("change", update);
+        update();
+    }
+
 }
 
 
@@ -425,354 +1234,95 @@ function renderCurrentDate() {
    REPEAT SYSTEM
    ========================================================= */
 
-/*
-   New weekly system:
-
-   Every week
-   Every other week
-   Every 3rd week
-   Every 4th week
-
-   On:
-   Sunday
-   Monday
-   Tuesday
-   Wednesday
-   Thursday
-   Friday
-   Saturday
-*/
-
-
 function setupRepeatUI() {
 
-    if (!taskRepeat) {
+    const repeatSelect =
+        document.getElementById(
+            "task-repeat"
+        );
+
+
+    const repeatOptions =
+        document.getElementById(
+            "repeat-options"
+        );
+
+
+    const weeklyOptions =
+        document.getElementById(
+            "weekly-repeat-options"
+        );
+
+
+    if (!repeatSelect) {
 
         return;
 
     }
 
 
-    /*
-       Keep the original select in the HTML
-       for compatibility, but use it as the
-       repeat-type selector.
-    */
-
-    taskRepeat.classList.add(
-        "aqelio-repeat-type-select"
-    );
-
-
-    let controls =
-        document.getElementById(
-            "repeat-custom-controls"
-        );
-
-
-    if (!controls) {
-
-        controls =
-            document.createElement("div");
-
-        controls.id =
-            "repeat-custom-controls";
-
-        controls.className =
-            "repeat-custom-controls";
-
-
-        taskRepeat.parentNode.insertBefore(
-            controls,
-            taskRepeat.nextSibling
-        );
-
-    }
-
-
-    controls.innerHTML = `
-
-        <div class="repeat-schedule-row">
-
-            <span class="repeat-prefix">
-                Every
-            </span>
-
-            <select
-                id="repeat-interval"
-                class="repeat-control-select"
-            >
-
-                <option value="1">
-                    Every week
-                </option>
-
-                <option value="2">
-                    Every other week
-                </option>
-
-                <option value="3">
-                    Every 3rd week
-                </option>
-
-                <option value="4">
-                    Every 4th week
-                </option>
-
-            </select>
-
-            <span class="repeat-prefix repeat-on">
-                on
-            </span>
-
-            <select
-                id="repeat-day"
-                class="repeat-control-select repeat-day-select"
-            >
-
-                <option value="0">Sunday</option>
-                <option value="1">Monday</option>
-                <option value="2">Tuesday</option>
-                <option value="3">Wednesday</option>
-                <option value="4">Thursday</option>
-                <option value="5">Friday</option>
-                <option value="6">Saturday</option>
-
-            </select>
-
-        </div>
-
-    `;
-
-
-    const intervalSelect =
-        document.getElementById(
-            "repeat-interval"
-        );
-
-
-    const daySelect =
-        document.getElementById(
-            "repeat-day"
-        );
-
-
-    intervalSelect.addEventListener(
-        "change",
+    const updateRepeatUI =
         () => {
 
-            updateRepeatControls();
-
-        }
-    );
+            const value =
+                repeatSelect.value;
 
 
-    daySelect.addEventListener(
+            if (repeatOptions) {
+
+                repeatOptions.classList.toggle(
+                    "active",
+                    value !== "none"
+                );
+
+            }
+
+
+            if (weeklyOptions) {
+
+                weeklyOptions.classList.toggle(
+                    "active",
+                    value === "weekly"
+                );
+
+            }
+
+        };
+
+
+    repeatSelect.removeEventListener(
         "change",
-        () => {
-
-            updateRepeatControls();
-
-        }
+        updateRepeatUI
     );
 
 
-    taskRepeat.addEventListener(
+    repeatSelect.addEventListener(
         "change",
-        () => {
-
-            updateRepeatControls();
-
-        }
+        updateRepeatUI
     );
 
 
-    updateRepeatControls();
-}
+    updateRepeatUI();
 
-
-function updateRepeatControls() {
-
-    const controls =
-        document.getElementById(
-            "repeat-custom-controls"
-        );
-
-
-    if (!controls || !taskRepeat) {
-
-        return;
-
-    }
-
-
-    const isWeekly =
-        taskRepeat.value === "weekly";
-
-
-    controls.classList.toggle(
-        "visible",
-        isWeekly
-    );
-
-}
-
-
-function setRepeatValues(
-    repeat,
-    repeatInterval,
-    repeatDay,
-    taskDateValue
-) {
-
-    if (!taskRepeat) {
-
-        return;
-
-    }
-
-
-    taskRepeat.value =
-        repeat || "none";
-
-
-    const intervalSelect =
-        document.getElementById(
-            "repeat-interval"
-        );
-
-
-    const daySelect =
-        document.getElementById(
-            "repeat-day"
-        );
-
-
-    const safeDate =
-        taskDateValue ||
-        formatDate(new Date());
-
-
-    const defaultDay =
-        parseDate(
-            safeDate
-        ).getDay();
-
-
-    if (intervalSelect) {
-
-        const interval =
-            Number(
-                repeatInterval || 1
-            );
-
-
-        intervalSelect.value =
-            [1, 2, 3, 4].includes(interval)
-                ? String(interval)
-                : "1";
-
-    }
-
-
-    if (daySelect) {
-
-        const day =
-            repeatDay !== undefined &&
-            repeatDay !== null
-                ? Number(repeatDay)
-                : defaultDay;
-
-
-        daySelect.value =
-            String(
-                Number.isInteger(day)
-                    ? day
-                    : defaultDay
-            );
-
-    }
-
-
-    updateRepeatControls();
-}
-
-
-function getRepeatSettings() {
-
-    const repeat =
-        taskRepeat
-            ? taskRepeat.value
-            : "none";
-
-
-    const intervalSelect =
-        document.getElementById(
-            "repeat-interval"
-        );
-
-
-    const daySelect =
-        document.getElementById(
-            "repeat-day"
-        );
-
-
-    let repeatInterval =
-        Number(
-            intervalSelect?.value || 1
-        );
-
-
-    let repeatDay =
-        Number(
-            daySelect?.value ??
-            parseDate(
-                taskDate.value ||
-                formatDate(new Date())
-            ).getDay()
-        );
-
-
-    if (
-        ![1, 2, 3, 4].includes(
-            repeatInterval
-        )
-    ) {
-
-        repeatInterval = 1;
-
-    }
-
-
-    if (
-        ![0, 1, 2, 3, 4, 5, 6].includes(
-            repeatDay
-        )
-    ) {
-
-        repeatDay =
-            parseDate(
-                taskDate.value ||
-                formatDate(new Date())
-            ).getDay();
-
-    }
-
-
-    return {
-        repeat,
-        repeatInterval,
-        repeatDay
-    };
 }
 
 
 /* =========================================================
-   RECURRING TASK LOGIC
+   RECURRING TASK HELPERS
    ========================================================= */
 
-function taskOccursOnDate(
+function getWeekdayNumber(
+    dateString
+) {
+
+    return parseDate(
+        dateString
+    ).getDay();
+
+}
+
+
+function isOccurrenceForDate(
     task,
     dateString
 ) {
@@ -784,27 +1334,9 @@ function taskOccursOnDate(
     }
 
 
-    const taskDate =
-        parseDate(task.date);
-
-    const targetDate =
-        parseDate(dateString);
-
-
-    if (targetDate < taskDate) {
-
-        return false;
-
-    }
-
-
     const repeat =
         task.repeat || "none";
 
-
-    /*
-       One-time task
-    */
 
     if (repeat === "none") {
 
@@ -816,9 +1348,34 @@ function taskOccursOnDate(
     }
 
 
-    /*
-       Every day
-    */
+    const start =
+        parseDate(
+            task.date
+        );
+
+
+    const current =
+        parseDate(
+            dateString
+        );
+
+
+    if (
+        current <
+        start
+    ) {
+
+        return false;
+
+    }
+
+
+    const days =
+        daysBetween(
+            task.date,
+            dateString
+        );
+
 
     if (repeat === "daily") {
 
@@ -827,69 +1384,45 @@ function taskOccursOnDate(
     }
 
 
-    /*
-       Monday-Friday
-    */
-
     if (repeat === "weekdays") {
 
-        const day =
-            targetDate.getDay();
+        const weekday =
+            current.getDay();
 
         return (
-            day !== 0 &&
-            day !== 6
+            weekday >= 1 &&
+            weekday <= 5
         );
 
     }
 
 
-    /*
-       Monthly
-    */
+    if (
+        repeat === "weekly" ||
+        repeat === "biweekly" ||
+        repeat === "triweekly" ||
+        repeat === "quadweekly"
+    ) {
 
-    if (repeat === "monthly") {
+        const interval =
+            repeat === "weekly"
+                ? 1
+                : repeat === "biweekly"
+                    ? 2
+                    : repeat === "triweekly"
+                        ? 3
+                        : 4;
 
-        return (
-            targetDate.getDate() ===
-            taskDate.getDate()
-        );
 
-    }
-
-
-    /*
-       Weekly custom system
-    */
-
-    if (repeat === "weekly") {
-
-        const repeatInterval =
-            Math.min(
-                4,
-                Math.max(
-                    1,
-                    Number(
-                        task.repeatInterval || 1
-                    )
-                )
+        const weeks =
+            Math.floor(
+                days / 7
             );
 
 
-        const repeatDay =
-            task.repeatDay !== undefined &&
-            task.repeatDay !== null
-                ? Number(task.repeatDay)
-                : taskDate.getDay();
-
-
-        /*
-           Must be the selected weekday.
-        */
-
         if (
-            targetDate.getDay() !==
-            repeatDay
+            days % 7 !==
+            0
         ) {
 
             return false;
@@ -897,115 +1430,417 @@ function taskOccursOnDate(
         }
 
 
-        const difference =
-            daysBetween(
-                task.date,
-                dateString
-            );
-
-
-        if (difference < 0) {
-
-            return false;
-
-        }
-
-
-        /*
-           A weekly recurrence is based on
-           calendar weeks from the original
-           task date.
-
-           1 = every week
-           2 = every other week
-           3 = every 3rd week
-           4 = every 4th week
-        */
-
-        const weeksSinceStart =
-            Math.floor(
-                difference / 7
-            );
-
-
         return (
-            weeksSinceStart %
-            repeatInterval ===
+            weeks %
+                interval ===
             0
         );
 
     }
 
 
-    /*
-       Backwards compatibility with any
-       previous recurring data.
-    */
-
-    if (
-        repeat === "weekly-old"
-    ) {
-
-        return (
-            targetDate.getDay() ===
-            taskDate.getDay()
-        );
-
-    }
-
-
     return false;
+
 }
 
-
-/* =========================================================
-   TASKS FOR DATE
-   ========================================================= */
 
 function getTasksForDate(
     dateString
 ) {
 
-    return tasks
-        .filter(
-            task =>
-                taskOccursOnDate(
+    const result = [];
+
+
+    tasks.forEach(
+        task => {
+
+            if (
+                isOccurrenceForDate(
                     task,
                     dateString
                 )
-        )
-        .sort(
-            (a, b) => {
+            ) {
 
-                if (!a.time && !b.time) {
-
-                    return 0;
-
-                }
-
-                if (!a.time) {
-
-                    return 1;
-
-                }
-
-                if (!b.time) {
-
-                    return -1;
-
-                }
-
-                return a.time.localeCompare(
-                    b.time
+                result.push(
+                    task
                 );
 
             }
-        );
+
+        }
+    );
+
+
+    return result;
+
 }
 
 
 /* =========================================================
-   CATEGORY
+   OCCURRENCE COMPLETION
+   ========================================================= */
+
+function getCompletionKey(
+    taskId,
+    dateString
+) {
+
+    return (
+        `${taskId}__${dateString}`
+    );
+
+}
+
+
+function isTaskCompletedForDate(
+    task,
+    dateString
+) {
+
+    if (
+        task.repeat &&
+        task.repeat !== "none"
+    ) {
+
+        const key =
+            getCompletionKey(
+                task.id,
+                dateString
+            );
+
+
+        return Boolean(
+            task.completedOccurrences &&
+            task.completedOccurrences.includes(
+                key
+            )
+        );
+
+    }
+
+
+    return Boolean(
+        task.completed
+    );
+
+}
+
+
+function setTaskCompletedForDate(
+    task,
+    dateString,
+    completed
+) {
+
+    if (
+        task.repeat &&
+        task.repeat !== "none"
+    ) {
+
+        if (
+            !Array.isArray(
+                task.completedOccurrences
+            )
+        ) {
+
+            task.completedOccurrences =
+                [];
+
+        }
+
+
+        const key =
+            getCompletionKey(
+                task.id,
+                dateString
+            );
+
+
+        if (completed) {
+
+            if (
+                !task.completedOccurrences.includes(
+                    key
+                )
+            ) {
+
+                task.completedOccurrences.push(
+                    key
+                );
+
+                stats.completed++;
+
+            }
+
+        } else {
+
+            const index =
+                task.completedOccurrences.indexOf(
+                    key
+                );
+
+
+            if (index !== -1) {
+
+                task.completedOccurrences.splice(
+                    index,
+                    1
+                );
+
+                stats.completed =
+                    Math.max(
+                        0,
+                        stats.completed - 1
+                    );
+
+            }
+
+        }
+
+    } else {
+
+        const previous =
+            Boolean(
+                task.completed
+            );
+
+
+        task.completed =
+            completed;
+
+
+        if (
+            completed &&
+            !previous
+        ) {
+
+            stats.completed++;
+
+        }
+
+
+        if (
+            !completed &&
+            previous
+        ) {
+
+            stats.completed =
+                Math.max(
+                    0,
+                    stats.completed - 1
+                );
+
+        }
+
+    }
+
+
+    saveTasks();
+
+    saveStats();
+
+}
+
+
+/* =========================================================
+   SAVE TASK
+   ========================================================= */
+
+if (saveTaskButton) {
+
+    saveTaskButton.addEventListener(
+        "click",
+        () => {
+
+            const title =
+                String(
+                    taskTitle?.value ||
+                    ""
+                ).trim();
+
+
+            if (!title) {
+
+                alert(
+                    "Please enter a task title."
+                );
+
+                return;
+
+            }
+
+
+            const date =
+                taskDate?.value ||
+                formatDate(new Date());
+
+
+            const time =
+                taskTime?.value ||
+                "";
+
+
+            const reminder =
+                taskReminder?.value ||
+                "none";
+
+
+            const repeat =
+                taskRepeat?.value ||
+                "none";
+
+
+            if (editingTaskId) {
+
+                const task =
+                    tasks.find(
+                        item =>
+                            String(item.id) ===
+                            String(editingTaskId)
+                    );
+
+
+                if (task) {
+
+                    task.title =
+                        title;
+
+                    task.date =
+                        date;
+
+                    task.time =
+                        time;
+
+                    task.reminder =
+                        reminder;
+
+                    task.repeat =
+                        repeat;
+
+                    task.categoryId =
+                        selectedCategory;
+
+                    task.duration =
+                        Number(
+                            customDuration?.value ||
+                            selectedDuration ||
+                            25
+                        );
+
+
+                    if (
+                        repeat ===
+                        "weekly"
+                    ) {
+
+                        task.weekdays =
+                            getSelectedWeekdays();
+
+                    } else {
+
+                        task.weekdays =
+                            [];
+
+                    }
+
+                }
+
+            } else {
+
+                const task = {
+
+                    id:
+                        createId(),
+
+                    title,
+
+                    date,
+
+                    time,
+
+                    reminder,
+
+                    repeat,
+
+                    categoryId:
+                        selectedCategory,
+
+                    duration:
+                        Number(
+                            customDuration?.value ||
+                            selectedDuration ||
+                            25
+                        ),
+
+                    completed:
+                        false,
+
+                    completedOccurrences:
+                        [],
+
+                    weekdays:
+                        repeat === "weekly"
+                            ? getSelectedWeekdays()
+                            : []
+
+                };
+
+
+                tasks.push(
+                    task
+                );
+
+            }
+
+
+            saveTasks();
+
+
+            closeTaskModal();
+
+
+            renderEverything();
+
+
+            scheduleAllReminders();
+
+        }
+    );
+
+}
+
+
+/* =========================================================
+   WEEKDAY SELECTION
+   ========================================================= */
+
+function getSelectedWeekdays() {
+
+    const checkboxes =
+        document.querySelectorAll(
+            "[data-repeat-weekday]"
+        );
+
+
+    return Array.from(
+        checkboxes
+    )
+        .filter(
+            checkbox =>
+                checkbox.checked
+        )
+        .map(
+            checkbox =>
+                Number(
+                    checkbox.dataset.repeatWeekday
+                )
+        );
+
+}
+
+
+/* =========================================================
+   TASK RENDERING
    ========================================================= */
 
 function getCategory(
@@ -1014,45 +1849,714 @@ function getCategory(
 
     return categories.find(
         category =>
-            category.id === categoryId
+            String(category.id) ===
+            String(categoryId)
     );
+
 }
 
 
-/* =========================================================
-   HTML ESCAPE
-   ========================================================= */
-
-function escapeHtml(
-    value
+function renderTaskCard(
+    task,
+    occurrenceDate
 ) {
 
-    return String(value)
-        .replaceAll(
-            "&",
-            "&amp;"
-        )
-        .replaceAll(
-            "<",
-            "&lt;"
-        )
-        .replaceAll(
-            ">",
-            "&gt;"
-        )
-        .replaceAll(
-            '"',
-            "&quot;"
-        )
-        .replaceAll(
-            "'",
-            "&#039;"
+    const category =
+        getCategory(
+            task.categoryId
         );
+
+
+    const completed =
+        isTaskCompletedForDate(
+            task,
+            occurrenceDate
+        );
+
+
+    const card =
+        document.createElement(
+            "div"
+        );
+
+
+    card.className =
+        "task-card";
+
+    card.dataset.taskId = task.id;
+
+
+    if (completed) {
+
+        card.classList.add(
+            "completed"
+        );
+
+    }
+
+
+    const categoryColor =
+        category?.color ||
+        "#078b91";
+
+
+    card.style.setProperty(
+        "--task-category-color",
+        categoryColor
+    );
+
+
+    const timeLabel =
+        task.time
+            ? formatTime(task.time)
+            : "";
+
+
+    card.innerHTML = `
+
+        <button
+            class="task-check"
+            type="button"
+            aria-label="${
+                completed
+                    ? "Mark incomplete"
+                    : "Mark complete"
+            }"
+        >
+            ${completed ? "✓" : ""}
+        </button>
+
+        <div class="task-main">
+
+            <div class="task-title-row">
+
+                <strong class="task-title">
+                    ${escapeHtml(task.title)}
+                </strong>
+
+                ${
+                    task.repeat &&
+                    task.repeat !== "none"
+                        ? `
+                            <span class="repeat-badge">
+                                ↻
+                            </span>
+                          `
+                        : ""
+                }
+
+            </div>
+
+            <div class="task-meta">
+
+                ${
+                    timeLabel
+                        ? `<span>${escapeHtml(timeLabel)}</span>`
+                        : ""
+                }
+
+                ${
+                    category
+                        ? `
+                            <span
+                                class="task-category"
+                                style="
+                                    --category-color:
+                                        ${category.color}
+                                "
+                            >
+                                ${escapeHtml(category.name)}
+                            </span>
+                          `
+                        : ""
+                }
+
+            </div>
+
+        </div>
+
+        <div class="task-actions">
+
+            <button
+                class="task-edit"
+                type="button"
+                aria-label="Edit task"
+            >
+                ✎
+            </button>
+
+            <button
+                class="task-delete"
+                type="button"
+                aria-label="Delete task"
+            >
+                ×
+            </button>
+
+        </div>
+
+    `;
+
+
+    const checkButton =
+        card.querySelector(
+            ".task-check"
+        );
+
+
+    checkButton.addEventListener(
+        "click",
+        event => {
+
+            event.stopPropagation();
+
+
+            setTaskCompletedForDate(
+                task,
+                occurrenceDate,
+                !completed
+            );
+
+
+            renderEverything();
+
+        }
+    );
+
+
+    const deleteButton =
+        card.querySelector(
+            ".task-delete"
+        );
+
+
+    deleteButton.addEventListener(
+        "click",
+        event => {
+
+            event.stopPropagation();
+
+            deleteTask(
+                task.id
+            );
+
+        }
+    );
+
+
+    card.addEventListener(
+        "click",
+        () => {
+
+            openTaskModal(
+                task
+            );
+
+        }
+    );
+
+
+    return card;
+
 }
 
 
 /* =========================================================
-   TIME
+   HOME
+   ========================================================= */
+
+function renderHome() {
+
+    const container =
+        document.getElementById(
+            "task-list"
+        );
+
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    container.innerHTML =
+        "";
+
+
+    const today =
+        formatDate(
+            new Date()
+        );
+
+
+    const todayTasks = getTasksForDate(today);
+    const completedCount = todayTasks.filter(task => isTaskCompletedForDate(task, today)).length;
+    const progressText = document.getElementById("progress-text");
+    const progressPercent = document.getElementById("progress-percent");
+    const progressFill = document.getElementById("progress-fill");
+    const percent = todayTasks.length ? Math.round(completedCount / todayTasks.length * 100) : 0;
+    if (progressText) progressText.textContent = `${completedCount} of ${todayTasks.length} tasks completed`;
+    if (progressPercent) progressPercent.textContent = `${percent}%`;
+    if (progressFill) progressFill.style.width = `${percent}%`;
+
+    if (todayTasks.length === 0) {
+
+        container.innerHTML = `
+
+            <div class="empty-state">
+
+                <div class="empty-icon">
+                    ✓
+                </div>
+
+                <h3>
+                    Nothing scheduled
+                </h3>
+
+                <p>
+                    You're all caught up.
+                </p>
+
+            </div>
+
+        `;
+
+        return;
+
+    }
+
+
+    todayTasks
+        .sort(
+            (a, b) => {
+
+                if (!a.time) return 1;
+
+                if (!b.time) return -1;
+
+                return a.time.localeCompare(
+                    b.time
+                );
+
+            }
+        )
+        .forEach(
+            task => {
+
+                container.appendChild(
+                    renderTaskCard(
+                        task,
+                        today
+                    )
+                );
+
+            }
+        );
+
+}
+
+
+/* =========================================================
+   CALENDAR
+   ========================================================= */
+
+function renderCalendar() {
+
+    const monthLabel =
+        document.getElementById(
+            "calendar-month"
+        );
+
+
+    const grid =
+        document.getElementById(
+            "calendar-grid"
+        );
+
+
+    if (
+        !monthLabel ||
+        !grid
+    ) {
+
+        return;
+
+    }
+
+
+    const year =
+        calendarDate.getFullYear();
+
+
+    const month =
+        calendarDate.getMonth();
+
+
+    monthLabel.textContent =
+        calendarDate.toLocaleDateString(
+            undefined,
+            {
+                month: "long",
+                year: "numeric"
+            }
+        );
+
+
+    grid.innerHTML =
+        "";
+
+
+    const firstDay =
+        new Date(
+            year,
+            month,
+            1
+        );
+
+
+    const lastDay =
+        new Date(
+            year,
+            month + 1,
+            0
+        );
+
+
+    const startingDay =
+        firstDay.getDay();
+
+
+    const daysInMonth =
+        lastDay.getDate();
+
+
+    for (
+        let i = 0;
+        i < startingDay;
+        i++
+    ) {
+
+        const empty =
+            document.createElement(
+                "div"
+            );
+
+        empty.className =
+            "calendar-day empty";
+
+        grid.appendChild(
+            empty
+        );
+
+    }
+
+
+    for (
+        let day = 1;
+        day <= daysInMonth;
+        day++
+    ) {
+
+        const date =
+            new Date(
+                year,
+                month,
+                day
+            );
+
+
+        const dateString =
+            formatDate(date);
+
+
+        const dayElement =
+            document.createElement(
+                "button"
+            );
+
+
+        dayElement.type =
+            "button";
+
+
+        dayElement.className =
+            "calendar-day";
+
+
+        if (
+            dateString ===
+            formatDate(new Date())
+        ) {
+
+            dayElement.classList.add(
+                "today"
+            );
+
+        }
+
+
+        if (
+            dateString ===
+            selectedCalendarDate
+        ) {
+
+            dayElement.classList.add(
+                "selected"
+            );
+
+        }
+
+
+        const dayTasks =
+            getTasksForDate(
+                dateString
+            );
+
+
+        dayElement.innerHTML = `
+
+            <span class="calendar-day-number">
+                ${day}
+            </span>
+
+            ${
+                dayTasks.length
+                    ? `
+                        <span class="calendar-task-dots">
+                            ${dayTasks
+                                .slice(0, 3)
+                                .map(
+                                    task => {
+
+                                        const category =
+                                            getCategory(
+                                                task.categoryId
+                                            );
+
+                                        return `
+                                            <i
+                                                style="
+                                                    background:
+                                                        ${
+                                                            category?.color ||
+                                                            "#078b91"
+                                                        }
+                                                "
+                                            ></i>
+                                        `;
+
+                                    }
+                                )
+                                .join("")}
+                        </span>
+                      `
+                    : ""
+            }
+
+        `;
+
+
+        dayElement.addEventListener(
+            "click",
+            () => {
+
+                selectedCalendarDate =
+                    dateString;
+
+
+                renderCalendar();
+
+                renderCalendarTasks();
+
+            }
+        );
+
+
+        grid.appendChild(
+            dayElement
+        );
+
+    }
+
+
+    renderCalendarTasks();
+
+}
+
+
+function renderCalendarTasks() {
+
+    const container =
+        document.getElementById(
+            "calendar-task-list"
+        );
+
+
+    const label =
+        document.getElementById(
+            "calendar-selected-date"
+        );
+
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    const date =
+        selectedCalendarDate ||
+        formatDate(new Date());
+
+
+    if (label) {
+
+        label.textContent =
+            parseDate(
+                date
+            ).toLocaleDateString(
+                undefined,
+                {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric"
+                }
+            );
+
+    }
+
+
+    container.innerHTML =
+        "";
+
+
+    const dayTasks =
+        getTasksForDate(
+            date
+        );
+
+
+    if (dayTasks.length === 0) {
+
+        container.innerHTML = `
+
+            <div class="empty-state">
+
+                <div class="empty-icon">
+                    +
+                </div>
+
+                <h3>
+                    No tasks
+                </h3>
+
+                <p>
+                    Nothing scheduled for this day.
+                </p>
+
+            </div>
+
+        `;
+
+        return;
+
+    }
+
+
+    dayTasks
+        .sort(
+            (a, b) => {
+
+                if (!a.time) return 1;
+
+                if (!b.time) return -1;
+
+                return a.time.localeCompare(
+                    b.time
+                );
+
+            }
+        )
+        .forEach(
+            task => {
+
+                container.appendChild(
+                    renderTaskCard(
+                        task,
+                        date
+                    )
+                );
+
+            }
+        );
+
+}
+
+
+/* =========================================================
+   CALENDAR CONTROLS
+   ========================================================= */
+
+const previousMonth =
+    document.getElementById(
+        "previous-month"
+    );
+
+
+const nextMonth =
+    document.getElementById(
+        "next-month"
+    );
+
+
+if (previousMonth) {
+
+    previousMonth.addEventListener(
+        "click",
+        () => {
+
+            calendarDate =
+                new Date(
+                    calendarDate.getFullYear(),
+                    calendarDate.getMonth() - 1,
+                    1
+                );
+
+
+            renderCalendar();
+
+        }
+    );
+
+}
+
+
+if (nextMonth) {
+
+    nextMonth.addEventListener(
+        "click",
+        () => {
+
+            calendarDate =
+                new Date(
+                    calendarDate.getFullYear(),
+                    calendarDate.getMonth() + 1,
+                    1
+                );
+
+
+            renderCalendar();
+
+        }
+    );
+
+}
+
+
+/* =========================================================
+   FORMAT TIME
    ========================================================= */
 
 function formatTime(
@@ -1081,1788 +2585,75 @@ function formatTime(
 
 
     hour =
-        hour % 12 || 12;
+        hour % 12 ||
+        12;
 
 
     return `${hour}:${minute} ${suffix}`;
+
 }
 
 
 /* =========================================================
-   REPEAT TEXT
+   ESCAPE HTML
    ========================================================= */
 
-function formatRepeat(
-    task
+function escapeHtml(
+    value
 ) {
 
-    if (!task) {
+    return String(
+        value
+    )
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+        .replace(
+            /</g,
+            "&lt;"
+        )
+        .replace(
+            />/g,
+            "&gt;"
+        )
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+        .replace(
+            /'/g,
+            "&#039;"
+        );
 
-        return "";
-
-    }
-
-
-    const repeat =
-        task.repeat || "none";
-
-
-    if (repeat === "daily") {
-
-        return "Daily";
-
-    }
-
-
-    if (repeat === "weekdays") {
-
-        return "Weekdays";
-
-    }
-
-
-    if (repeat === "monthly") {
-
-        return "Monthly";
-
-    }
-
-
-    if (repeat === "weekly") {
-
-        const interval =
-            Number(
-                task.repeatInterval || 1
-            );
-
-
-        const intervalText = {
-
-            1: "Every week",
-
-            2: "Every other week",
-
-            3: "Every 3rd week",
-
-            4: "Every 4th week"
-
-        }[interval] || "Every week";
-
-
-        const day =
-            task.repeatDay !== undefined &&
-            task.repeatDay !== null
-                ? Number(task.repeatDay)
-                : parseDate(
-                    task.date
-                ).getDay();
-
-
-        const dayName =
-            [
-                "Sunday",
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday"
-            ][day];
-
-
-        return `${intervalText} on ${dayName}`;
-
-    }
-
-
-    return "";
 }
 
 
 /* =========================================================
-   COMPLETION SYSTEM
+   DELETE TASK
    ========================================================= */
-
-function isRecurringTask(
-    task
-) {
-
-    return (
-        task.repeat &&
-        task.repeat !== "none"
-    );
-
-}
-
-
-function isTaskCompletedForDate(
-    task,
-    displayDate
-) {
-
-    /*
-       Recurring tasks use individual
-       completion dates.
-    */
-
-    if (isRecurringTask(task)) {
-
-        if (
-            !Array.isArray(
-                task.completedDates
-            )
-        ) {
-
-            task.completedDates = [];
-
-        }
-
-
-        return task.completedDates.includes(
-            displayDate
-        );
-
-    }
-
-
-    return Boolean(
-        task.completed
-    );
-}
-
-
-/* =========================================================
-   TASK CARD
-   ========================================================= */
-
-function createTaskCard(
-    task,
-    displayDate
-) {
-
-    const card =
-        document.createElement("article");
-
-
-    const completed =
-        isTaskCompletedForDate(
-            task,
-            displayDate
-        );
-
-
-    card.className =
-        "task-card" +
-        (
-            completed
-                ? " completed"
-                : ""
-        );
-
-
-    const category =
-        getCategory(
-            task.categoryId
-        );
-
-
-    const categoryColor =
-        category?.color ||
-        "#078b91";
-
-
-    const categoryNameText =
-        category?.name ||
-        "Personal";
-
-
-    const repeatText =
-        formatRepeat(task);
-
-
-    card.innerHTML = `
-
-        <button
-            class="task-check"
-            type="button"
-            aria-label="Complete task"
-        >
-            ${completed ? "✓" : ""}
-        </button>
-
-
-        <div class="task-main">
-
-            <h3>
-                ${escapeHtml(task.title)}
-            </h3>
-
-
-            <div class="task-meta">
-
-                <span
-                    class="task-category"
-                    style="--category-color:${escapeHtml(categoryColor)}"
-                >
-                    ${escapeHtml(categoryNameText)}
-                </span>
-
-
-                ${
-                    task.time
-                        ? `
-                            <span>
-                                • ${formatTime(task.time)}
-                            </span>
-                        `
-                        : ""
-                }
-
-
-                <span>
-                    • ${task.duration || 25} min
-                </span>
-
-
-                ${
-                    repeatText
-                        ? `
-                            <span>
-                                • ↻ ${escapeHtml(repeatText)}
-                            </span>
-                        `
-                        : ""
-                }
-
-
-                ${
-                    task.reminder &&
-                    task.reminder !== "none"
-                        ? `
-                            <span>
-                                • 🔔
-                            </span>
-                        `
-                        : ""
-                }
-
-            </div>
-
-        </div>
-
-
-        <div class="task-actions">
-
-            <button
-                class="task-focus-trigger"
-                type="button"
-            >
-                Focus
-            </button>
-
-
-            <button
-                class="task-edit-trigger"
-                type="button"
-            >
-                Edit
-            </button>
-
-
-            <button
-                class="task-delete-trigger"
-                type="button"
-                aria-label="Delete task"
-            >
-                ×
-            </button>
-
-        </div>
-
-    `;
-
-
-    card.querySelector(
-        ".task-check"
-    ).addEventListener(
-        "click",
-        () =>
-            toggleTask(
-                task.id,
-                displayDate
-            )
-    );
-
-
-    card.querySelector(
-        ".task-edit-trigger"
-    ).addEventListener(
-        "click",
-        () =>
-            openEditTask(
-                task.id
-            )
-    );
-
-
-    card.querySelector(
-        ".task-delete-trigger"
-    ).addEventListener(
-        "click",
-        () =>
-            deleteTask(
-                task.id
-            )
-    );
-
-
-    card.querySelector(
-        ".task-focus-trigger"
-    ).addEventListener(
-        "click",
-        () =>
-            startFocusForTask(
-                task
-            )
-    );
-
-
-    return card;
-}
-
-
-/* =========================================================
-   HOME
-   ========================================================= */
-
-function renderHome() {
-
-    renderCurrentDate();
-
-
-    const today =
-        formatDate(new Date());
-
-
-    const list =
-        document.getElementById(
-            "task-list"
-        );
-
-
-    if (!list) {
-
-        return;
-
-    }
-
-
-    list.innerHTML = "";
-
-
-    /*
-       IMPORTANT:
-       This uses getTasksForDate(today),
-       which now understands the new weekly
-       recurrence system.
-    */
-
-    const todayTasks =
-        getTasksForDate(today);
-
-
-    if (todayTasks.length === 0) {
-
-        list.innerHTML = `
-
-            <div class="empty-state">
-
-                <h3>
-                    Nothing scheduled today
-                </h3>
-
-                <p>
-                    Add a task to get your day started.
-                </p>
-
-            </div>
-
-        `;
-
-    } else {
-
-        todayTasks.forEach(
-            task => {
-
-                list.appendChild(
-                    createTaskCard(
-                        task,
-                        today
-                    )
-                );
-
-            }
-        );
-
-    }
-
-
-    updateProgress(
-        todayTasks,
-        today
-    );
-}
-
-
-/* =========================================================
-   PROGRESS
-   ========================================================= */
-
-function updateProgress(
-    todayTasks,
-    displayDate
-) {
-
-    const total =
-        todayTasks.length;
-
-
-    const completed =
-        todayTasks.filter(
-            task =>
-                isTaskCompletedForDate(
-                    task,
-                    displayDate
-                )
-        ).length;
-
-
-    const percentage =
-        total === 0
-            ? 0
-            : Math.round(
-                completed /
-                total *
-                100
-            );
-
-
-    const progressText =
-        document.getElementById(
-            "progress-text"
-        );
-
-
-    const progressPercent =
-        document.getElementById(
-            "progress-percent"
-        );
-
-
-    const progressFill =
-        document.getElementById(
-            "progress-fill"
-        );
-
-
-    if (progressText) {
-
-        progressText.textContent =
-            `${completed} of ${total} tasks completed`;
-
-    }
-
-
-    if (progressPercent) {
-
-        progressPercent.textContent =
-            `${percentage}%`;
-
-    }
-
-
-    if (progressFill) {
-
-        progressFill.style.width =
-            `${percentage}%`;
-
-    }
-}
-
-
-/* =========================================================
-   COMPLETE TASK
-   ========================================================= */
-
-function toggleTask(
-    taskId,
-    displayDate
-) {
-
-    const task =
-        tasks.find(
-            item =>
-                item.id === taskId
-        );
-
-
-    if (!task) {
-
-        return;
-
-    }
-
-
-    const currentlyCompleted =
-        isTaskCompletedForDate(
-            task,
-            displayDate
-        );
-
-
-    if (isRecurringTask(task)) {
-
-        if (
-            !Array.isArray(
-                task.completedDates
-            )
-        ) {
-
-            task.completedDates = [];
-
-        }
-
-
-        if (currentlyCompleted) {
-
-            task.completedDates =
-                task.completedDates.filter(
-                    date =>
-                        date !== displayDate
-                );
-
-            stats.completed =
-                Math.max(
-                    0,
-                    stats.completed - 1
-                );
-
-        } else {
-
-            task.completedDates.push(
-                displayDate
-            );
-
-            stats.completed++;
-
-        }
-
-    } else {
-
-        task.completed =
-            !currentlyCompleted;
-
-
-        if (task.completed) {
-
-            stats.completed++;
-
-        } else {
-
-            stats.completed =
-                Math.max(
-                    0,
-                    stats.completed - 1
-                );
-
-        }
-
-    }
-
-
-    saveTasks();
-
-    saveStats();
-
-
-    renderHome();
-
-    renderCalendar();
-
-    renderStats();
-}
-
-
-/* =========================================================
-   DELETE / UNDO
-   ========================================================= */
-
-let deletedTaskBackup = null;
-
-let undoTimeout = null;
-
 
 function deleteTask(
     taskId
 ) {
 
-    const index =
-        tasks.findIndex(
-            task =>
-                task.id === taskId
-        );
-
-
-    if (index === -1) {
-
-        return;
-
-    }
-
-
-    deletedTaskBackup = {
-
-        task:
-            structuredClone
-                ? structuredClone(
-                    tasks[index]
-                )
-                : JSON.parse(
-                    JSON.stringify(
-                        tasks[index]
-                    )
-                ),
-
-        index
-
-    };
-
-
-    tasks.splice(
-        index,
-        1
-    );
-
-
-    saveTasks();
-
-
-    renderHome();
-
-    renderCalendar();
-
-
-    showUndoToast();
-
-
-    clearTimeout(
-        undoTimeout
-    );
-
-
-    undoTimeout =
-        setTimeout(
-            () => {
-
-                deletedTaskBackup =
-                    null;
-
-            },
-            10000
-        );
-}
-
-
-function showUndoToast() {
-
-    const existing =
-        document.getElementById(
-            "aqelio-undo-toast"
-        );
-
-
-    if (existing) {
-
-        existing.remove();
-
-    }
-
-
-    const toast =
-        document.createElement(
-            "div"
-        );
-
-
-    toast.id =
-        "aqelio-undo-toast";
-
-
-    toast.innerHTML = `
-
-        <span>
-            Task deleted
-        </span>
-
-        <button
-            type="button"
-            id="aqelio-undo-button"
-        >
-            Undo
-        </button>
-
-    `;
-
-
-    Object.assign(
-        toast.style,
-        {
-            position: "fixed",
-            left: "50%",
-            bottom: "96px",
-            transform: "translateX(-50%)",
-            zIndex: "99998",
-            display: "flex",
-            alignItems: "center",
-            gap: "14px",
-            padding: "12px 16px",
-            borderRadius: "14px",
-            background: "#202c31",
-            color: "#ffffff",
-            boxShadow:
-                "0 12px 30px rgba(0,0,0,0.18)",
-            fontSize: "14px",
-            fontWeight: "600"
-        }
-    );
-
-
-    const undoButton =
-        toast.querySelector(
-            "#aqelio-undo-button"
-        );
-
-
-    Object.assign(
-        undoButton.style,
-        {
-            border: "none",
-            background: "transparent",
-            color: "#71d5d9",
-            fontWeight: "700",
-            cursor: "pointer",
-            padding: "2px 4px"
-        }
-    );
-
-
-    undoButton.addEventListener(
-        "click",
-        undoDelete
-    );
-
-
-    document.body.appendChild(
-        toast
-    );
-
-
-    setTimeout(
-        () => {
-
-            if (
-                toast.parentNode
-            ) {
-
-                toast.remove();
-
-            }
-
-        },
-        10000
-    );
-}
-
-
-function undoDelete() {
-
-    if (!deletedTaskBackup) {
-
-        return;
-
-    }
-
-
-    tasks.splice(
-        deletedTaskBackup.index,
-        0,
-        deletedTaskBackup.task
-    );
-
-
-    saveTasks();
-
-
-    clearTimeout(
-        undoTimeout
-    );
-
-
-    deletedTaskBackup =
-        null;
-
-
-    const toast =
-        document.getElementById(
-            "aqelio-undo-toast"
-        );
-
-
-    if (toast) {
-
-        toast.remove();
-
-    }
-
-
-    renderHome();
-
-    renderCalendar();
-
-}
-
-
-/* =========================================================
-   MODAL — ADD
-   ========================================================= */
-
-function openAddTask(
-    dateOverride = null
-) {
-
-    editingTaskId =
-        null;
-
-
-    if (modalTitle) {
-
-        modalTitle.textContent =
-            "Add a task";
-
-    }
-
-
-    if (modalEyebrow) {
-
-        modalEyebrow.textContent =
-            "NEW TASK";
-
-    }
-
-
-    saveTaskButton.textContent =
-        "Add Task";
-
-
-    taskTitle.value =
-        "";
-
-
-    taskDate.value =
-        dateOverride ||
-        selectedCalendarDate ||
-        formatDate(new Date());
-
-
-    taskTime.value =
-        "";
-
-
-    taskReminder.value =
-        "none";
-
-
-    selectedCategory =
-        categories[0]?.id ||
-        null;
-
-
-    selectedDuration =
-        25;
-
-
-    customDuration.value =
-        "";
-
-
-    setRepeatValues(
-        "none",
-        1,
-        parseDate(
-            taskDate.value
-        ).getDay(),
-        taskDate.value
-    );
-
-
-    updateDurationButtons();
-
-    renderCategories();
-
-
-    closeCategoryForm();
-
-
-    taskModal.classList.add(
-        "active"
-    );
-}
-
-
-/* =========================================================
-   MODAL — EDIT
-   ========================================================= */
-
-function openEditTask(
-    taskId
-) {
-
-    const task =
-        tasks.find(
-            item =>
-                item.id === taskId
-        );
-
-
-    if (!task) {
-
-        return;
-
-    }
-
-
-    editingTaskId =
-        taskId;
-
-
-    if (modalTitle) {
-
-        modalTitle.textContent =
-            "Edit task";
-
-    }
-
-
-    if (modalEyebrow) {
-
-        modalEyebrow.textContent =
-            "EDIT TASK";
-
-    }
-
-
-    saveTaskButton.textContent =
-        "Save Changes";
-
-
-    taskTitle.value =
-        task.title || "";
-
-
-    taskDate.value =
-        task.date ||
-        formatDate(new Date());
-
-
-    taskTime.value =
-        task.time || "";
-
-
-    taskReminder.value =
-        task.reminder ||
-        "none";
-
-
-    selectedCategory =
-        task.categoryId ||
-        categories[0]?.id ||
-        null;
-
-
-    selectedDuration =
-        Number(
-            task.duration || 25
-        );
-
-
     if (
-        ![15, 25, 45, 60].includes(
-            selectedDuration
-        )
+        typeof window.AqelioAndroid !==
+            "undefined" &&
+        typeof window.AqelioAndroid.cancelReminder ===
+            "function"
     ) {
 
-        customDuration.value =
-            selectedDuration;
-
-    } else {
-
-        customDuration.value =
-            "";
-
-    }
-
-
-    setRepeatValues(
-        task.repeat || "none",
-        task.repeatInterval || 1,
-        task.repeatDay,
-        task.date
-    );
-
-
-    updateDurationButtons();
-
-    renderCategories();
-
-    closeCategoryForm();
-
-
-    taskModal.classList.add(
-        "active"
-    );
-}
-
-
-/* =========================================================
-   CLOSE MODAL
-   ========================================================= */
-
-function closeModal() {
-
-    taskModal.classList.remove(
-        "active"
-    );
-
-
-    editingTaskId =
-        null;
-
-
-    closeCategoryForm();
-}
-
-
-document.getElementById(
-    "close-modal"
-).addEventListener(
-    "click",
-    closeModal
-);
-
-
-modalOverlay.addEventListener(
-    "click",
-    closeModal
-);
-
-
-/* =========================================================
-   SAVE TASK
-   ========================================================= */
-
-saveTaskButton.addEventListener(
-    "click",
-    saveTask
-);
-
-
-function saveTask() {
-
-    const title =
-        taskTitle.value.trim();
-
-
-    if (!title) {
-
-        taskTitle.focus();
-
-        return;
-
-    }
-
-
-    const date =
-        taskDate.value ||
-        formatDate(new Date());
-
-
-    const time =
-        taskTime.value;
-
-
-    const reminder =
-        taskReminder.value;
-
-
-    const repeatSettings =
-        getRepeatSettings();
-
-
-    let duration =
-        selectedDuration;
-
-
-    if (
-        customDuration.value
-    ) {
-
-        duration =
-            Number(
-                customDuration.value
-            );
-
-    }
-
-
-    if (
-        !duration ||
-        duration < 1
-    ) {
-
-        duration = 25;
-
-    }
-
-
-    if (editingTaskId) {
-
-        const task =
-            tasks.find(
-                item =>
-                    item.id ===
-                    editingTaskId
-            );
-
-
-        if (!task) {
-
-            return;
-
-        }
-
-
-        const wasRecurring =
-            isRecurringTask(task);
-
-
-        const wasCompleted =
-            isTaskCompletedForDate(
-                task,
-                task.date ||
-                date
-            );
-
-
-        task.title =
-            title;
-
-
-        task.date =
-            date;
-
-
-        task.time =
-            time;
-
-
-        task.reminder =
-            reminder;
-
-
-        task.repeat =
-            repeatSettings.repeat;
-
-
-        task.repeatInterval =
-            repeatSettings.repeatInterval;
-
-
-        task.repeatDay =
-            repeatSettings.repeatDay;
-
-
-        task.categoryId =
-            selectedCategory;
-
-
-        task.duration =
-            duration;
-
-
-        /*
-           Preserve recurring completion data.
-        */
-
-        if (
-            repeatSettings.repeat !==
-            "none"
-        ) {
-
-            if (
-                !Array.isArray(
-                    task.completedDates
-                )
-            ) {
-
-                task.completedDates = [];
-
-            }
-
-
-            /*
-               If an old one-time task was
-               already completed and is now
-               made recurring, carry that
-               completion into its current date.
-            */
-
-            if (
-                !wasRecurring &&
-                wasCompleted &&
-                !task.completedDates.includes(
-                    date
-                )
-            ) {
-
-                task.completedDates.push(
-                    date
-                );
-
-            }
-
-
-        } else {
-
-            /*
-               If a recurring task is converted
-               to a normal task, use its current
-               occurrence completion state.
-            */
-
-            task.completed =
-                wasRecurring
-                    ? isTaskCompletedForDate(
-                        task,
-                        date
-                    )
-                    : Boolean(
-                        task.completed
-                    );
-
-        }
-
-
-        /*
-           Clear old reminder records so
-           edited reminders can fire again.
-        */
-
-        firedReminders =
-            firedReminders.filter(
-                key =>
-                    !key.startsWith(
-                        `${task.id}-`
-                    )
-            );
-
-    } else {
-
-        tasks.push({
-
-            id:
-                createId(),
-
-            title,
-
-            date,
-
-            time,
-
-            reminder,
-
-            repeat:
-                repeatSettings.repeat,
-
-            repeatInterval:
-                repeatSettings.repeatInterval,
-
-            repeatDay:
-                repeatSettings.repeatDay,
-
-            categoryId:
-                selectedCategory,
-
-            duration,
-
-            completed:
-                false,
-
-            completedDates:
-                [],
-
-            createdAt:
-                Date.now()
-
-        });
-
-    }
-
-
-    saveTasks();
-
-    saveFiredReminders();
-
-
-    closeModal();
-
-
-    renderHome();
-
-    renderCalendar();
-
-
-    checkReminders();
-}
-
-
-/* =========================================================
-   ADD BUTTONS
-   ========================================================= */
-
-document.getElementById(
-    "add-task-top"
-).addEventListener(
-    "click",
-    () =>
-        openAddTask(
-            formatDate(
-                new Date()
-            )
-        )
-);
-
-
-document.getElementById(
-    "add-task-main"
-).addEventListener(
-    "click",
-    () =>
-        openAddTask(
-            selectedCalendarDate ||
-            formatDate(new Date())
-        )
-);
-
-
-document.getElementById(
-    "add-task-calendar"
-).addEventListener(
-    "click",
-    () =>
-        openAddTask(
-            selectedCalendarDate
-        )
-);
-
-
-/* =========================================================
-   CATEGORY COLOR PICKER
-   ========================================================= */
-
-function setupCategoryColorPicker() {
-
-    if (!categoryForm) {
-
-        return;
-
-    }
-
-
-    let picker =
-        document.getElementById(
-            "new-category-color"
+        window.AqelioAndroid.cancelReminder(
+            String(taskId)
         );
-
-
-    if (!picker) {
-
-        const colorRow =
-            document.createElement(
-                "div"
-            );
-
-
-        colorRow.className =
-            "category-color-row";
-
-
-        colorRow.innerHTML = `
-
-            <label
-                for="new-category-color"
-            >
-                Color
-            </label>
-
-            <div class="category-color-input-wrap">
-
-                <input
-                    id="new-category-color"
-                    type="color"
-                    value="#078b91"
-                >
-
-                <span
-                    id="new-category-color-value"
-                >
-                    #078B91
-                </span>
-
-            </div>
-
-        `;
-
-
-        categoryForm.insertBefore(
-            colorRow,
-            categoryForm.querySelector(
-                ".category-form-actions"
-            )
-        );
-
-
-        picker =
-            document.getElementById(
-                "new-category-color"
-            );
-
-
-        picker.addEventListener(
-            "input",
-            () => {
-
-                const value =
-                    picker.value.toUpperCase();
-
-
-                const valueText =
-                    document.getElementById(
-                        "new-category-color-value"
-                    );
-
-
-                if (valueText) {
-
-                    valueText.textContent =
-                        value;
-
-                }
-
-            }
-        );
-
-    }
-
-}
-
-
-function closeCategoryForm() {
-
-    if (!categoryForm) {
-
-        return;
-
-    }
-
-
-    categoryForm.classList.add(
-        "hidden"
-    );
-
-
-    if (categoryName) {
-
-        categoryName.value =
-            "";
-
-    }
-
-
-    const picker =
-        document.getElementById(
-            "new-category-color"
-        );
-
-
-    if (picker) {
-
-        picker.value =
-            "#078b91";
-
-
-        const valueText =
-            document.getElementById(
-                "new-category-color-value"
-            );
-
-
-        if (valueText) {
-
-            valueText.textContent =
-                "#078B91";
-
-        }
-
-    }
-
-}
-
-
-function openCategoryForm() {
-
-    if (!categoryForm) {
-
-        return;
-
-    }
-
-
-    categoryForm.classList.remove(
-        "hidden"
-    );
-
-
-    setupCategoryColorPicker();
-
-
-    const picker =
-        document.getElementById(
-            "new-category-color"
-        );
-
-
-    if (picker) {
-
-        picker.value =
-            getUnusedCategoryColor();
-
-    }
-
-
-    categoryName.focus();
-}
-
-
-/* =========================================================
-   CATEGORY SYSTEM
-   ========================================================= */
-
-function renderCategories() {
-
-    if (!categoryList) {
-
-        return;
-
-    }
-
-
-    categoryList.innerHTML = "";
-
-
-    if (categories.length === 0) {
-
-        categoryList.innerHTML = `
-
-            <div class="empty-category-state">
-                No categories yet.
-            </div>
-
-        `;
-
-        selectedCategory =
-            null;
-
-        return;
-
-    }
-
-
-    /*
-       Make sure the selected category
-       still exists.
-    */
-
-    if (
-        !categories.some(
-            category =>
-                category.id ===
-                selectedCategory
-        )
-    ) {
-
-        selectedCategory =
-            categories[0].id;
-
-    }
-
-
-    categories.forEach(
-        category => {
-
-            const button =
-                document.createElement(
-                    "button"
-                );
-
-
-            button.type =
-                "button";
-
-
-            button.className =
-                "category-button" +
-                (
-                    selectedCategory ===
-                    category.id
-                        ? " selected"
-                        : ""
-                );
-
-
-            button.innerHTML = `
-
-                <span class="category-button-main">
-
-                    <span
-                        class="category-dot"
-                        style="
-                            background:${escapeHtml(
-                                category.color
-                            )}
-                        "
-                    ></span>
-
-                    <span class="category-name-text">
-                        ${escapeHtml(
-                            category.name
-                        )}
-                    </span>
-
-                </span>
-
-
-                <span
-                    class="category-delete"
-                    role="button"
-                    tabindex="0"
-                    aria-label="Delete ${escapeHtml(
-                        category.name
-                    )} category"
-                    title="Delete category"
-                >
-                    ×
-                </span>
-
-            `;
-
-
-            button.addEventListener(
-                "click",
-                () => {
-
-                    selectedCategory =
-                        category.id;
-
-                    renderCategories();
-
-                }
-            );
-
-
-            const deleteButton =
-                button.querySelector(
-                    ".category-delete"
-                );
-
-
-            deleteButton.addEventListener(
-                "click",
-                event => {
-
-                    event.preventDefault();
-
-                    event.stopPropagation();
-
-                    deleteCategory(
-                        category.id
-                    );
-
-                }
-            );
-
-
-            deleteButton.addEventListener(
-                "keydown",
-                event => {
-
-                    if (
-                        event.key ===
-                        "Enter" ||
-                        event.key ===
-                        " "
-                    ) {
-
-                        event.preventDefault();
-
-                        event.stopPropagation();
-
-                        deleteCategory(
-                            category.id
-                        );
-
-                    }
-
-                }
-            );
-
-
-            categoryList.appendChild(
-                button
-            );
-
-        }
-    );
-}
-
-
-function deleteCategory(
-    categoryId
-) {
-
-    const category =
-        getCategory(categoryId);
-
-
-    if (!category) {
-
-        return;
 
     }
 
 
     const confirmed =
-        window.confirm(
-            `Delete the "${category.name}" category? Tasks using it will be moved to another category.`
+        confirm(
+            "Delete this task?"
         );
 
 
@@ -2873,794 +2664,212 @@ function deleteCategory(
     }
 
 
-    const remainingCategories =
-        categories.filter(
-            item =>
-                item.id !==
-                categoryId
+    tasks =
+        tasks.filter(
+            task =>
+                String(task.id) !==
+                String(taskId)
         );
 
-
-    /*
-       Choose a fallback category.
-       Prefer Personal if it still exists.
-    */
-
-    const fallbackCategory =
-        remainingCategories.find(
-            item =>
-                item.id === "personal"
-        ) ||
-        remainingCategories[0] ||
-        null;
-
-
-    tasks.forEach(
-        task => {
-
-            if (
-                task.categoryId ===
-                categoryId
-            ) {
-
-                task.categoryId =
-                    fallbackCategory
-                        ?.id ||
-                    null;
-
-            }
-
-        }
-    );
-
-
-    categories =
-        remainingCategories;
-
-
-    selectedCategory =
-        fallbackCategory
-            ?.id ||
-        null;
-
-
-    saveCategories();
 
     saveTasks();
 
-
-    renderCategories();
-
-    renderHome();
-
-    renderCalendar();
+    renderEverything();
 
 }
 
 
 /* =========================================================
-   CATEGORY BUTTONS
+   RENDER EVERYTHING
    ========================================================= */
 
-setupCategoryColorPicker();
-
-
-document.getElementById(
-    "show-category-form"
-).addEventListener(
-    "click",
-    openCategoryForm
-);
-
-
-document.getElementById(
-    "cancel-category"
-).addEventListener(
-    "click",
-    closeCategoryForm
-);
-
-
-/* =========================================================
-   CATEGORY COLOR SYSTEM
-   ========================================================= */
-
-function getUnusedCategoryColor() {
-
-    const colors = [
-
-        "#078b91",
-        "#4f7cff",
-        "#8a63d2",
-        "#e18a45",
-        "#d65f7a",
-        "#5e9b67",
-        "#c6a23a",
-        "#3f8fa8",
-        "#a855a8",
-        "#5c6bc0",
-        "#d66b5d",
-        "#6d8f9e"
-
-    ];
-
-
-    const usedColors =
-        categories.map(
-            category =>
-                category.color
-        );
-
-
-    const unused =
-        colors.find(
-            color =>
-                !usedColors.includes(
-                    color
-                )
-        );
-
-
-    if (unused) {
-
-        return unused;
-
-    }
-
-
-    return generateUniqueColor();
-}
-
-
-function generateUniqueColor() {
-
-    let color;
-
-    let attempts = 0;
-
-
-    do {
-
-        const hue =
-            Math.floor(
-                Math.random() * 360
-            );
-
-
-        color =
-            `hsl(${hue}, 65%, 52%)`;
-
-
-        attempts++;
-
-    } while (
-        categories.some(
-            category =>
-                category.color ===
-                color
-        ) &&
-        attempts < 100
-    );
-
-
-    return color;
-}
-
-
-/* =========================================================
-   SAVE CATEGORY
-   ========================================================= */
-
-document.getElementById(
-    "save-category"
-).addEventListener(
-    "click",
-    () => {
-
-        const name =
-            categoryName.value.trim();
-
-
-        if (!name) {
-
-            categoryName.focus();
-
-            return;
-
+function renderEverything() {
+    // Keep one rendering failure from preventing the other screens from updating.
+    for (const render of [renderHome, renderCalendar, renderStats, renderCategories]) {
+        try {
+            render();
+        } catch (error) {
+            console.error("Aqelio render error:", error);
         }
-
-
-        const picker =
-            document.getElementById(
-                "new-category-color"
-            );
-
-
-        const color =
-            picker?.value ||
-            getUnusedCategoryColor();
-
-
-        const category = {
-
-            id:
-                createId(),
-
-            name,
-
-            color
-
-        };
-
-
-        categories.push(
-            category
-        );
-
-
-        selectedCategory =
-            category.id;
-
-
-        saveCategories();
-
-
-        closeCategoryForm();
-
-
-        renderCategories();
-
     }
-);
-
-
-/* =========================================================
-   DURATION
-   ========================================================= */
-
-document
-    .querySelectorAll(
-        ".duration-button"
-    )
-    .forEach(
-        button => {
-
-            button.addEventListener(
-                "click",
-                () => {
-
-                    selectedDuration =
-                        Number(
-                            button.dataset.duration
-                        );
-
-
-                    customDuration.value =
-                        "";
-
-
-                    updateDurationButtons();
-
-                }
-            );
-
-        }
-    );
-
-
-function updateDurationButtons() {
-
-    document
-        .querySelectorAll(
-            ".duration-button"
-        )
-        .forEach(
-            button => {
-
-                button.classList.toggle(
-                    "selected",
-                    Number(
-                        button.dataset.duration
-                    ) ===
-                    Number(
-                        selectedDuration
-                    )
-                );
-
-            }
-        );
 }
 
 
 /* =========================================================
-   CALENDAR
+   REMINDER SYSTEM
    ========================================================= */
 
-function renderCalendar() {
-
-    const grid =
-        document.getElementById(
-            "calendar-grid"
-        );
+const reminderTimers =
+    new Map();
 
 
-    if (!grid) {
-
-        return;
-
-    }
-
-
-    grid.innerHTML = "";
-
-
-    const year =
-        calendarDate.getFullYear();
-
-
-    const month =
-        calendarDate.getMonth();
-
-
-    const monthTitle =
-        document.getElementById(
-            "calendar-month"
-        );
-
-
-    if (monthTitle) {
-
-        monthTitle.textContent =
-            calendarDate.toLocaleDateString(
-                undefined,
-                {
-                    month: "long",
-                    year: "numeric"
-                }
-            );
-
-    }
-
-
-    const firstDay =
-        new Date(
-            year,
-            month,
-            1
-        ).getDay();
-
-
-    const daysInMonth =
-        new Date(
-            year,
-            month + 1,
-            0
-        ).getDate();
-
-
-    const previousMonthDays =
-        new Date(
-            year,
-            month,
-            0
-        ).getDate();
-
-
-    for (
-        let i = firstDay - 1;
-        i >= 0;
-        i--
-    ) {
-
-        const day =
-            previousMonthDays - i;
-
-
-        grid.appendChild(
-            createCalendarDay(
-                new Date(
-                    year,
-                    month - 1,
-                    day
-                ),
-                true
-            )
-        );
-
-    }
-
-
-    for (
-        let day = 1;
-        day <= daysInMonth;
-        day++
-    ) {
-
-        grid.appendChild(
-            createCalendarDay(
-                new Date(
-                    year,
-                    month,
-                    day
-                ),
-                false
-            )
-        );
-
-    }
-
-
-    const totalCells =
-        firstDay +
-        daysInMonth;
-
-
-    const remaining =
-        totalCells % 7 === 0
-            ? 0
-            : 7 -
-              (
-                  totalCells % 7
-              );
-
-
-    for (
-        let day = 1;
-        day <= remaining;
-        day++
-    ) {
-
-        grid.appendChild(
-            createCalendarDay(
-                new Date(
-                    year,
-                    month + 1,
-                    day
-                ),
-                true
-            )
-        );
-
-    }
-
-
-    renderCalendarTasks();
-}
-
-
-function createCalendarDay(
-    date,
-    outside
+function getReminderMinutes(
+    reminder
 ) {
 
-    const button =
-        document.createElement(
-            "button"
-        );
-
-
-    button.type =
-        "button";
-
-
-    button.className =
-        "calendar-day";
-
-
-    if (outside) {
-
-        button.classList.add(
-            "outside"
-        );
-
-    }
-
-
-    const dateString =
-        formatDate(date);
-
-
     if (
-        dateString ===
-        formatDate(new Date())
+        !reminder ||
+        reminder === "none"
     ) {
 
-        button.classList.add(
-            "today"
-        );
+        return 0;
 
     }
 
 
     if (
-        dateString ===
-        selectedCalendarDate
+        reminder === "10"
     ) {
 
-        button.classList.add(
-            "selected"
-        );
+        return 10;
 
     }
 
 
-    button.innerHTML = `
+    if (
+        reminder === "30"
+    ) {
 
-        <span
-            class="calendar-day-number"
-        >
-            ${date.getDate()}
-        </span>
-
-    `;
-
-
-    const dateTasks =
-        getTasksForDate(
-            dateString
-        );
-
-
-    if (dateTasks.length > 0) {
-
-        const dot =
-            document.createElement(
-                "span"
-            );
-
-
-        dot.className =
-            "calendar-task-dot";
-
-
-        button.appendChild(
-            dot
-        );
+        return 30;
 
     }
 
 
-    if (!outside) {
+    if (
+        reminder === "60"
+    ) {
 
-        button.addEventListener(
-            "click",
-            () => {
-
-                selectedCalendarDate =
-                    dateString;
-
-                renderCalendar();
-
-            }
-        );
+        return 60;
 
     }
 
 
-    return button;
+    return 0;
+
 }
 
 
-document.getElementById(
-    "previous-month"
-).addEventListener(
-    "click",
-    () => {
+function getReminderTime(
+    task,
+    occurrenceDate
+) {
 
-        calendarDate =
-            new Date(
-                calendarDate.getFullYear(),
-                calendarDate.getMonth() - 1,
-                1
-            );
+    if (
+        !task ||
+        !task.time ||
+        !task.reminder ||
+        task.reminder === "none"
+    ) {
 
-        renderCalendar();
-
-    }
-);
-
-
-document.getElementById(
-    "next-month"
-).addEventListener(
-    "click",
-    () => {
-
-        calendarDate =
-            new Date(
-                calendarDate.getFullYear(),
-                calendarDate.getMonth() + 1,
-                1
-            );
-
-        renderCalendar();
+        return null;
 
     }
-);
 
 
-/* =========================================================
-   CALENDAR TASK LIST
-   ========================================================= */
+    const [
+        hour,
+        minute
+    ] =
+        task.time
+            .split(":")
+            .map(Number);
 
-function renderCalendarTasks() {
 
-    const list =
-        document.getElementById(
-            "calendar-task-list"
+    const reminderMinutes =
+        getReminderMinutes(
+            task.reminder
         );
-
-
-    const title =
-        document.getElementById(
-            "selected-date-title"
-        );
-
-
-    if (!list || !title) {
-
-        return;
-
-    }
 
 
     const date =
         parseDate(
-            selectedCalendarDate
+            occurrenceDate
         );
 
 
-    title.textContent =
-        date.toLocaleDateString(
-            undefined,
-            {
-                month: "long",
-                day: "numeric",
-                year: "numeric"
-            }
-        );
-
-
-    list.innerHTML = "";
-
-
-    const dateTasks =
-        getTasksForDate(
-            selectedCalendarDate
-        );
-
-
-    if (dateTasks.length === 0) {
-
-        list.innerHTML = `
-
-            <div class="empty-state">
-
-                <h3>
-                    No tasks for this day
-                </h3>
-
-                <p>
-                    Add a task to your calendar.
-                </p>
-
-            </div>
-
-        `;
-
-        return;
-
-    }
-
-
-    dateTasks.forEach(
-        task => {
-
-            list.appendChild(
-                createTaskCard(
-                    task,
-                    selectedCalendarDate
-                )
-            );
-
-        }
+    date.setHours(
+        hour,
+        minute,
+        0,
+        0
     );
+
+
+    date.setMinutes(
+        date.getMinutes() -
+        reminderMinutes
+    );
+
+
+    return date;
+
 }
 
 
-/* =========================================================
-   REMINDER / NOTIFICATION SYSTEM
-   ========================================================= */
+function getReminderKey(
+    task,
+    occurrenceDate,
+    reminderTime
+) {
 
-/* =========================================================
-   REMINDERS
-   ========================================================= */
+    return [
+        task.id,
+        occurrenceDate,
+        reminderTime
+    ].join("_");
 
-const reminderTimers = new Map();
-
-function showReminderCard(task) {
-    // Remove an existing reminder card if one is already visible
-    document.querySelector(".aqelio-reminder-card")?.remove();
-
-    const card = document.createElement("div");
-    card.className = "aqelio-reminder-card";
-
-    card.innerHTML = `
-        <div class="aqelio-reminder-icon">🔔</div>
-
-        <div class="aqelio-reminder-content">
-            <div class="aqelio-reminder-title">Aqelio Reminder</div>
-            <div class="aqelio-reminder-task">${escapeHTML(task.title)}</div>
-            <div class="aqelio-reminder-subtitle">It's time for this task.</div>
-        </div>
-
-        <button
-            type="button"
-            class="aqelio-reminder-close"
-            aria-label="Dismiss reminder"
-        >
-            ×
-        </button>
-    `;
-
-    document.body.appendChild(card);
-
-    // Close button
-    card.querySelector(".aqelio-reminder-close")?.addEventListener("click", () => {
-        card.classList.remove("show");
-
-        setTimeout(() => {
-            card.remove();
-        }, 250);
-    });
-
-    // Animate in
-    requestAnimationFrame(() => {
-        card.classList.add("show");
-    });
-
-    // Automatically disappear after 8 seconds
-    setTimeout(() => {
-        if (!card.isConnected) return;
-
-        card.classList.remove("show");
-
-        setTimeout(() => {
-            card.remove();
-        }, 250);
-    }, 8000);
 }
 
-function scheduleReminder(task) {
-    if (!task.reminder || task.completed) return;
 
-    const when = new Date(task.reminder).getTime();
-    const delay = when - Date.now();
+function requestNotificationPermission() {
 
-    if (delay <= 0 || delay > 2147483647) return;
+    if (
+        !("Notification" in window)
+    ) {
 
-    if (reminderTimers.has(task.id)) {
-        clearTimeout(reminderTimers.get(task.id));
+        return Promise.resolve(
+            false
+        );
+
     }
 
-    const timer = setTimeout(() => {
 
-        // Show Aqelio's own in-app reminder card
-        showReminderCard(task);
+    if (
+        Notification.permission ===
+        "granted"
+    ) {
 
-        reminderTimers.delete(task.id);
+        return Promise.resolve(
+            true
+        );
 
-    }, delay);
+    }
 
-    reminderTimers.set(task.id, timer);
+
+    if (
+        Notification.permission ===
+        "denied"
+    ) {
+
+        return Promise.resolve(
+            false
+        );
+
+    }
+
+
+    return Notification.requestPermission()
+        .then(
+            permission =>
+                permission ===
+                "granted"
+        )
+        .catch(
+            () => false
+        );
+
 }
 
-function scheduleAllReminders() {
-    tasks.forEach(scheduleReminder);
-}
-/* =========================================================
-   REMINDER SOUND
-   ========================================================= */
 
 function playReminderSound() {
 
@@ -3694,16 +2903,8 @@ function playReminderSound() {
             "sine";
 
 
-        oscillator.frequency.setValueAtTime(
-            880,
-            context.currentTime
-        );
-
-
-        oscillator.frequency.setValueAtTime(
-            660,
-            context.currentTime + 0.15
-        );
+        oscillator.frequency.value =
+            880;
 
 
         gain.gain.setValueAtTime(
@@ -3713,14 +2914,16 @@ function playReminderSound() {
 
 
         gain.gain.exponentialRampToValueAtTime(
-            0.25,
-            context.currentTime + 0.02
+            0.15,
+            context.currentTime +
+                0.02
         );
 
 
         gain.gain.exponentialRampToValueAtTime(
             0.0001,
-            context.currentTime + 0.5
+            context.currentTime +
+                0.5
         );
 
 
@@ -3736,114 +2939,254 @@ function playReminderSound() {
 
         oscillator.start();
 
-
         oscillator.stop(
-            context.currentTime + 0.5
+            context.currentTime +
+                0.5
         );
 
     } catch (error) {
 
         console.warn(
-            "Could not play reminder sound:",
+            "Reminder sound unavailable:",
             error
         );
 
     }
-}
-
-
-/* =========================================================
-   REMINDER KEY
-   ========================================================= */
-
-function getReminderKey(
-    task,
-    occurrenceDate,
-    reminderTime
-) {
-
-    return [
-        task.id,
-        occurrenceDate,
-        reminderTime
-    ].join("-");
 
 }
 
 
 /* =========================================================
-   REMINDER TIME
+   NATIVE AND BROWSER REMINDERS
    ========================================================= */
 
-function getReminderTime(
-    task,
-    occurrenceDate
+function scheduleReminder(
+    task
 ) {
 
     if (
-        !task.time ||
+        !task ||
         !task.reminder ||
-        task.reminder === "none"
+        task.reminder === "none" ||
+        !task.time
     ) {
 
-        return null;
+        return;
 
     }
 
 
-    const date =
-        parseDate(
-            occurrenceDate
+    const occurrences =
+        getUpcomingReminderOccurrences(
+            task
         );
 
 
-    const [hours, minutes] =
-        task.time
-            .split(":")
-            .map(Number);
+    occurrences.forEach(
+        occurrence => {
+
+            const reminderTime =
+                getReminderTime(
+                    task,
+                    occurrence
+                );
 
 
-    date.setHours(
-        hours,
-        minutes,
-        0,
-        0
+            if (!reminderTime) {
+
+                return;
+
+            }
+
+
+            const when =
+                reminderTime.getTime();
+
+
+            if (
+                when <=
+                Date.now()
+            ) {
+
+                return;
+
+            }
+
+
+            const reminderKey =
+                getReminderKey(
+                    task,
+                    occurrence,
+                    when
+                );
+
+
+            if (
+                typeof window.AqelioAndroid !==
+                    "undefined" &&
+                typeof window.AqelioAndroid.scheduleReminder ===
+                    "function"
+            ) {
+
+                window.AqelioAndroid.scheduleReminder(
+                    String(task.id),
+                    String(task.title),
+                    when
+                );
+
+                return;
+
+            }
+
+
+            const delay =
+                when -
+                Date.now();
+
+
+            if (
+                delay >
+                2147483647
+            ) {
+
+                return;
+
+            }
+
+
+            if (
+                reminderTimers.has(
+                    reminderKey
+                )
+            ) {
+
+                clearTimeout(
+                    reminderTimers.get(
+                        reminderKey
+                    )
+                );
+
+            }
+
+
+            const timer =
+                setTimeout(
+                    () => {
+
+                        if (
+                            firedReminders.includes(
+                                reminderKey
+                            )
+                        ) {
+
+                            return;
+
+                        }
+
+
+                        firedReminders.push(
+                            reminderKey
+                        );
+
+
+                        saveFiredReminders();
+
+
+                        sendReminderNotification(
+                            task,
+                            occurrence
+                        );
+
+
+                        reminderTimers.delete(
+                            reminderKey
+                        );
+
+                    },
+                    delay
+                );
+
+
+            reminderTimers.set(
+                reminderKey,
+                timer
+            );
+
+        }
     );
 
+}
 
-    if (
-        task.reminder ===
-        "at-time"
+
+function getUpcomingReminderOccurrences(
+    task
+) {
+
+    const occurrences =
+        [];
+
+
+    const today =
+        new Date();
+
+
+    for (
+        let i = 0;
+        i < 60;
+        i++
     ) {
 
-        return date;
+        const date =
+            new Date(
+                today
+            );
+
+
+        date.setDate(
+            date.getDate() +
+            i
+        );
+
+
+        const dateString =
+            formatDate(
+                date
+            );
+
+
+        if (
+            isOccurrenceForDate(
+                task,
+                dateString
+            )
+        ) {
+
+            occurrences.push(
+                dateString
+            );
+
+        }
 
     }
 
 
-    const minutesBefore =
-        Number(
-            task.reminder
-        );
+    return occurrences;
+
+}
 
 
-    if (
-        !Number.isNaN(
-            minutesBefore
-        )
-    ) {
+function scheduleAllReminders() {
 
-        date.setMinutes(
-            date.getMinutes() -
-            minutesBefore
-        );
+    tasks.forEach(
+        task => {
 
-        return date;
+            scheduleReminder(
+                task
+            );
 
-    }
+        }
+    );
 
-
-    return null;
 }
 
 
@@ -3851,19 +3194,22 @@ function getReminderTime(
    SEND REMINDER
    ========================================================= */
 
-function sendReminderNotification(
+async function sendReminderNotification(
     task,
     occurrenceDate
 ) {
 
-    const reminderLabel =
-        task.reminder ===
-        "at-time"
-            ? "It's time"
-            : `${task.reminder} minutes before`;
-
-
     playReminderSound();
+
+
+    const reminderLabel =
+        task.reminder === "10"
+            ? "10 minutes before"
+            : task.reminder === "30"
+                ? "30 minutes before"
+                : task.reminder === "60"
+                    ? "1 hour before"
+                    : "Reminder";
 
 
     if (
@@ -3879,11 +3225,16 @@ function sendReminderNotification(
                     "Aqelio Reminder",
                     {
                         body:
-                            `${task.title} — ${reminderLabel}`,
+                            task.title,
+
                         icon:
                             "Aqelio.jpg",
+
                         tag:
-                            `aqelio-${task.id}-${occurrenceDate}`
+                            `aqelio-${task.id}-${occurrenceDate}`,
+
+                        requireInteraction:
+                            false
                     }
                 );
 
@@ -3921,6 +3272,7 @@ function sendReminderNotification(
         );
 
     }
+
 }
 
 
@@ -4316,6 +3668,7 @@ function startFocusForTask(
     showScreen(
         "focus"
     );
+
 }
 
 
@@ -4485,16 +3838,338 @@ function renderStats() {
             stats.minutes;
 
     }
+
 }
 
+
+/* =========================================================
+   AQELIO PREMIUM ACCESS + PAYWALL PREVIEW
+   Local-only prototype. Real paid access must be verified by a
+   trusted payment/backend service before public launch.
+   ========================================================= */
+
+function hasAqelioPremium() {
+    return localStorage.getItem(PREMIUM_KEY) === "true";
+}
+
+function openAqelioPaywall() {
+    const modal = document.getElementById("premium-paywall-modal");
+    if (!modal) return;
+    modal.classList.add("active");
+    modal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("premium-paywall-open");
+    modal.querySelector(".premium-paywall-panel")?.focus();
+}
+
+function closeAqelioPaywall() {
+    const modal = document.getElementById("premium-paywall-modal");
+    if (!modal) return;
+    modal.classList.remove("active");
+    modal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("premium-paywall-open");
+}
+
+function requireAqelioPremium() {
+    if (hasAqelioPremium()) return true;
+    openAqelioPaywall();
+    return false;
+}
+
+function syncAqelioPremiumUI() {
+    const premium = hasAqelioPremium();
+    const content = document.getElementById("premium-tools-content");
+    const locked = document.getElementById("premium-locked-screen");
+    if (content) content.hidden = !premium;
+    if (locked) locked.hidden = premium;
+    const pill = document.querySelector(".premium-tools-heading .premium-pill");
+    if (pill) pill.textContent = premium ? "PREMIUM ACTIVE" : "PREMIUM";
+}
+
+function setupAqelioPaywall() {
+    syncAqelioPremiumUI();
+    document.getElementById("open-premium-paywall")?.addEventListener("click", openAqelioPaywall);
+    document.getElementById("close-premium-paywall")?.addEventListener("click", closeAqelioPaywall);
+    document.getElementById("premium-later-button")?.addEventListener("click", closeAqelioPaywall);
+    document.querySelectorAll("[data-close-premium-paywall]").forEach(button => button.addEventListener("click", closeAqelioPaywall));
+    document.getElementById("premium-upgrade-button")?.addEventListener("click", () => {
+        const note = document.querySelector(".premium-payment-note");
+        if (note) note.textContent = "Checkout is not connected yet, so you cannot purchase Premium from this preview. No payment has been taken.";
+    });
+    document.addEventListener("keydown", event => {
+        if (event.key === "Escape") closeAqelioPaywall();
+    });
+}
+
+/* =========================================================
+   AQELIO PLUS — LOCAL PREMIUM UTILITIES
+   Natural-language quick add, non-overlapping time blocks,
+   calendar export and portable backup/restore.
+   ========================================================= */
+
+function parseNaturalTaskPhrase(rawPhrase) {
+    const now = new Date();
+    let text = String(rawPhrase || "").trim();
+    if (!text) return { error: "Type a task and a time, such as ‘Lunch tomorrow at 1 pm’." };
+
+    let date = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const lower = text.toLowerCase();
+    const weekdayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+    if (/\btomorrow\b/i.test(text)) {
+        date.setDate(date.getDate() + 1);
+        text = text.replace(/\btomorrow\b/i, " ");
+    } else if (/\btoday\b/i.test(text)) {
+        text = text.replace(/\btoday\b/i, " ");
+    } else if (/\bnext week\b/i.test(text)) {
+        date.setDate(date.getDate() + 7);
+        text = text.replace(/\bnext week\b/i, " ");
+    } else {
+        const weekdayMatch = lower.match(/\b(next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/);
+        if (weekdayMatch) {
+            const targetDay = weekdayNames.indexOf(weekdayMatch[2]);
+            let delta = (targetDay - date.getDay() + 7) % 7;
+            if (delta === 0 || weekdayMatch[1]) delta += 7;
+            date.setDate(date.getDate() + delta);
+            text = text.replace(new RegExp("\\b" + weekdayMatch[0].replace(/\s+/g, "\\s+") + "\\b", "i"), " ");
+        }
+    }
+
+    // Accept explicit dates like 2026-11-04 or 11/4.
+    const isoMatch = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
+    const slashMatch = !isoMatch && text.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+    if (isoMatch) {
+        date = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+        text = text.replace(isoMatch[0], " ");
+    } else if (slashMatch) {
+        let year = slashMatch[3] ? Number(slashMatch[3]) : now.getFullYear();
+        if (year < 100) year += 2000;
+        date = new Date(year, Number(slashMatch[1]) - 1, Number(slashMatch[2]));
+        if (!slashMatch[3] && date < new Date(now.getFullYear(), now.getMonth(), now.getDate())) date.setFullYear(date.getFullYear() + 1);
+        text = text.replace(slashMatch[0], " ");
+    }
+
+    let time = "";
+    const timeMatch = text.match(/\b(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i)
+        || text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\b/i);
+    if (timeMatch) {
+        let hour = Number(timeMatch[1]);
+        const minute = Number(timeMatch[2] || 0);
+        const meridiem = (timeMatch[3] || "").toLowerCase().replace(/\./g, "");
+        if (minute > 59 || hour > 23 || (meridiem && (hour < 1 || hour > 12))) return { error: "That time doesn't look valid. Try a time like 1:30 pm." };
+        if (meridiem === "pm" && hour < 12) hour += 12;
+        if (meridiem === "am" && hour === 12) hour = 0;
+        if (!meridiem && timeMatch[0].toLowerCase().includes("at") && hour <= 7) hour += 12; // common “at 1” means 1 pm
+        time = String(hour).padStart(2, "0") + ":" + String(minute).padStart(2, "0");
+        text = text.replace(timeMatch[0], " ");
+    }
+
+    text = text.replace(/\b(on|for|at)\b/gi, " ").replace(/[,.!?]+$/g, "").replace(/\s+/g, " ").trim();
+    if (!text) return { error: "I found the date/time, but not a task name. Add a task name too." };
+    return { title: text.charAt(0).toUpperCase() + text.slice(1), date: formatDate(date), time };
+}
+
+function addTaskFromNaturalLanguage(phrase) {
+    if (!requireAqelioPremium()) return false;
+    const parsed = parseNaturalTaskPhrase(phrase);
+    const feedback = document.getElementById("natural-task-feedback");
+    if (parsed.error) {
+        if (feedback) feedback.textContent = parsed.error;
+        return false;
+    }
+    const task = {
+        id: createId(), title: parsed.title, date: parsed.date, time: parsed.time,
+        reminder: "none", repeat: "none", categoryId: categories[0]?.id || null,
+        duration: 25, completed: false, completedOccurrences: [], weekdays: []
+    };
+    tasks.push(task);
+    saveTasks();
+    renderHome();
+    renderCalendar();
+    if (feedback) feedback.textContent = `Added “${task.title}” for ${task.date}${task.time ? " at " + task.time : " (no time set)"}. You can edit it anytime.`;
+    return true;
+}
+
+function timeToMinutes(value) {
+    if (!value || !/^\d{2}:\d{2}$/.test(value)) return null;
+    const [hours, minutes] = value.split(":").map(Number);
+    return hours * 60 + minutes;
+}
+
+function minutesToTime(value) {
+    return String(Math.floor(value / 60)).padStart(2, "0") + ":" + String(value % 60).padStart(2, "0");
+}
+
+function buildSmartSchedule() {
+    if (!requireAqelioPremium()) return;
+    const dateInput = document.getElementById("smart-schedule-date");
+    const startInput = document.getElementById("smart-schedule-start");
+    const endInput = document.getElementById("smart-schedule-end");
+    const feedback = document.getElementById("smart-schedule-feedback");
+    const date = dateInput?.value || formatDate(new Date());
+    const start = timeToMinutes(startInput?.value || "09:00");
+    const end = timeToMinutes(endInput?.value || "17:00");
+    if (start === null || end === null || start >= end) {
+        if (feedback) feedback.textContent = "Choose a valid start and end time; the end must be later than the start.";
+        return;
+    }
+
+    const dayTasks = getTasksForDate(date);
+    const timed = dayTasks.filter(task => task.time && !isTaskCompletedForDate(task, date));
+    const occupied = timed.map(task => {
+        const startMinute = timeToMinutes(task.time);
+        return { start: startMinute, end: startMinute + Math.max(5, Number(task.duration) || 25) };
+    }).filter(slot => slot.start !== null);
+    const unscheduled = dayTasks.filter(task => !task.time && (!task.repeat || task.repeat === "none") && !isTaskCompletedForDate(task, date));
+    let placed = 0;
+    let cursor = start;
+
+    unscheduled.forEach(task => {
+        const duration = Math.max(5, Number(task.duration) || 25);
+        let candidate = cursor;
+        while (candidate + duration <= end) {
+            const conflict = occupied.find(slot => candidate < slot.end && candidate + duration > slot.start);
+            if (!conflict) break;
+            candidate = Math.ceil(conflict.end / 5) * 5;
+        }
+        if (candidate + duration <= end) {
+            task.time = minutesToTime(candidate);
+            occupied.push({ start: candidate, end: candidate + duration });
+            occupied.sort((a, b) => a.start - b.start);
+            cursor = candidate + duration + 5;
+            placed++;
+        }
+    });
+
+    if (placed) {
+        saveTasks();
+        renderHome();
+        renderCalendar();
+        if (feedback) feedback.textContent = `Scheduled ${placed} task${placed === 1 ? "" : "s"} on ${date}. Tasks that did not fit remain unscheduled.`;
+    } else if (feedback) {
+        feedback.textContent = unscheduled.length ? "No unscheduled tasks fit in that window. Try extending the day or shortening task durations." : "There are no incomplete, unscheduled tasks for that date.";
+    }
+}
+
+function downloadTextFile(filename, content, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function escapeICS(value) {
+    return String(value || "").replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
+}
+
+function exportCalendarICS() {
+    if (!requireAqelioPremium()) return;
+    const events = tasks.filter(task => task.date && !task.completed);
+    if (!events.length) {
+        const feedback = document.getElementById("backup-feedback");
+        if (feedback) feedback.textContent = "There are no tasks to export yet.";
+        return;
+    }
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+    const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Aqelio//Aqelio Calendar//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"];
+    events.forEach(task => {
+        const startDate = (task.date || formatDate(new Date())).replace(/-/g, "");
+        const startTime = task.time || "09:00";
+        const [hour, minute] = startTime.split(":").map(Number);
+        const start = new Date(Number(startDate.slice(0, 4)), Number(startDate.slice(4, 6)) - 1, Number(startDate.slice(6, 8)), hour, minute);
+        const finish = new Date(start.getTime() + Math.max(5, Number(task.duration) || 25) * 60000);
+        const formatLocal = d => formatDate(d).replace(/-/g, "") + "T" + String(d.getHours()).padStart(2, "0") + String(d.getMinutes()).padStart(2, "0") + "00";
+        lines.push("BEGIN:VEVENT", `UID:${String(task.id).replace(/[^a-zA-Z0-9-]/g, "")}@aqelio.local`, `DTSTAMP:${stamp}`, `DTSTART:${formatLocal(start)}`, `DTEND:${formatLocal(finish)}`, `SUMMARY:${escapeICS(task.title)}`, "END:VEVENT");
+    });
+    lines.push("END:VCALENDAR");
+    downloadTextFile("aqelio-calendar.ics", lines.join("\r\n"), "text/calendar;charset=utf-8");
+    const feedback = document.getElementById("backup-feedback");
+    if (feedback) feedback.textContent = "Calendar file created. Import it into Google Calendar or another calendar app; this is an export, not continuous two-way sync.";
+}
+
+function exportAqelioBackup() {
+    if (!requireAqelioPremium()) return;
+    const backup = {
+        app: "Aqelio", backupVersion: 1, exportedAt: new Date().toISOString(),
+        tasks, categories, stats, profile, darkMode,
+        firedReminders
+    };
+    downloadTextFile("aqelio-backup.json", JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
+    const feedback = document.getElementById("backup-feedback");
+    if (feedback) feedback.textContent = "Backup downloaded. Keep this file somewhere safe; it contains your task and profile data.";
+}
+
+function restoreAqelioBackup(file) {
+    if (!requireAqelioPremium()) return;
+    const feedback = document.getElementById("backup-feedback");
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const backup = JSON.parse(String(reader.result || ""));
+            if (backup.app !== "Aqelio" || !Array.isArray(backup.tasks) || !Array.isArray(backup.categories)) {
+                throw new Error("That file is not a valid Aqelio backup.");
+            }
+            if (!confirm("Restore this backup? It will replace the tasks, categories, and stats currently stored on this device.")) return;
+            tasks = backup.tasks;
+            categories = backup.categories;
+            stats = backup.stats && typeof backup.stats === "object" ? backup.stats : { completed: 0, focus: 0, minutes: 0 };
+            profile = backup.profile && typeof backup.profile === "object" ? backup.profile : profile;
+            firedReminders = Array.isArray(backup.firedReminders) ? backup.firedReminders : [];
+            if (typeof backup.darkMode === "boolean") {
+                darkMode = backup.darkMode;
+                localStorage.setItem(THEME_KEY, darkMode ? "dark" : "light");
+            }
+            saveTasks(); saveCategories(); saveStats(); saveFiredReminders();
+            localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+            applyTheme(); renderProfile(); renderCategories(); renderHome(); renderCalendar(); renderStats();
+            if (feedback) feedback.textContent = "Backup restored on this device.";
+        } catch (error) {
+            if (feedback) feedback.textContent = error.message || "Could not read that backup file.";
+        }
+    };
+    reader.onerror = () => { if (feedback) feedback.textContent = "Could not read that backup file."; };
+    reader.readAsText(file);
+}
+
+function setupPremiumTools() {
+    const dateInput = document.getElementById("smart-schedule-date");
+    if (dateInput && !dateInput.value) dateInput.value = formatDate(new Date());
+    document.getElementById("natural-task-form")?.addEventListener("submit", event => {
+        event.preventDefault();
+        const input = document.getElementById("natural-task-input");
+        if (addTaskFromNaturalLanguage(input?.value || "") && input) input.value = "";
+    });
+    document.getElementById("smart-schedule-button")?.addEventListener("click", buildSmartSchedule);
+    document.getElementById("export-calendar-button")?.addEventListener("click", exportCalendarICS);
+    document.getElementById("export-backup-button")?.addEventListener("click", exportAqelioBackup);
+    const importInput = document.getElementById("import-backup-file");
+    document.getElementById("import-backup-button")?.addEventListener("click", () => importInput?.click());
+    importInput?.addEventListener("change", () => {
+        restoreAqelioBackup(importInput.files?.[0]);
+        importInput.value = "";
+    });
+}
 
 /* =========================================================
    INITIALIZE
    ========================================================= */
 
 setupRepeatUI();
+setupCategoryControls();
+setupDurationButtons();
 
 setupCategoryColorPicker();
+setupAqelioPaywall();
+setupPremiumTools();
+
+applyTheme();
+
+renderProfile();
 
 renderCurrentDate();
 
