@@ -1,22 +1,26 @@
-const CACHE_NAME = "aqelio-v1";
+// Aqelio Service Worker
+// Update this version whenever you want to force a fresh cache.
+const CACHE_NAME = "aqelio-v2";
 
-const APP_SHELL = [
+const STATIC_ASSETS = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
-  "./Aqelio.jpg",
-  "./manifest.json"
+  "./manifest.json",
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 // Install
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(APP_SHELL);
+      return cache.addAll(STATIC_ASSETS);
     })
   );
 
+  // Activate the new service worker immediately
   self.skipWaiting();
 });
 
@@ -25,49 +29,54 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
-        cacheNames
-          .filter((cacheName) => cacheName !== CACHE_NAME)
-          .map((cacheName) => caches.delete(cacheName))
+        cacheNames.map((cacheName) => {
+          if (cacheName !== CACHE_NAME) {
+            return caches.delete(cacheName);
+          }
+        })
       );
     })
   );
 
+  // Take control of open Aqelio tabs immediately
   self.clients.claim();
 });
 
 // Fetch
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") {
-    return;
-  }
+  // Only handle GET requests
+  if (event.request.method !== "GET") return;
 
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-
-      return fetch(event.request)
-        .then((networkResponse) => {
-          if (
-            !networkResponse ||
-            networkResponse.status !== 200 ||
-            networkResponse.type === "opaque"
-          ) {
-            return networkResponse;
-          }
-
+    fetch(event.request)
+      .then((networkResponse) => {
+        // Save the newest version in the cache
+        if (
+          networkResponse &&
+          networkResponse.status === 200 &&
+          networkResponse.type === "basic"
+        ) {
           const responseClone = networkResponse.clone();
 
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseClone);
           });
+        }
 
-          return networkResponse;
-        })
-        .catch(() => {
-          return caches.match("./index.html");
+        return networkResponse;
+      })
+      .catch(() => {
+        // If offline, use the cached version
+        return caches.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+
+          // If it's a page request, fall back to Aqelio
+          if (event.request.mode === "navigate") {
+            return caches.match("./index.html");
+          }
         });
-    })
+      })
   );
 });
