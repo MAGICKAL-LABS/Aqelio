@@ -1,0 +1,20 @@
+Aqelio Premium Paywall preview
+
+Files
+- index.html
+- app.js
+- style.css
+
+Install
+1. Make a backup of your current three files.
+2. Replace your project's index.html, app.js, and style.css with these versions. Keep the files together in the same folder.
+3. Open Aqelio as usual. Premium tools are locked by default. The free task manager, calendar, categories, and focus features are unchanged.
+
+Preview unlocked Premium locally (development only)
+1. Open Aqelio in your browser.
+2. Open Developer Tools > Console.
+3. Run: localStorage.setItem("aqelio_premium", "true"); location.reload();
+4. To lock it again: localStorage.removeItem("aqelio_premium"); location.reload();
+
+Important
+This is a paywall UI and client-side prototype, not a live payment system. The $4.99/month price is illustrative and no payment is processed. The local flag can be changed by users, so do not sell access until purchases are verified through a trusted payment provider/backend.
