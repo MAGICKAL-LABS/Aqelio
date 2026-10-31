@@ -38,7 +38,7 @@
                     <p id="current-date"></p>
                 </div>
 
-                <div class="avatar">E</div>
+                <button id="profile-button" class="avatar" type="button" aria-label="Open profile settings">E</button>
 
             </header>
 
@@ -124,6 +124,82 @@
                     Start Focus
                 </button>
 
+            </section>
+
+            <!-- ================= PREMIUM TOOLS ================= -->
+            <section class="premium-tools-card" aria-labelledby="premium-tools-title">
+                <div class="premium-tools-heading">
+                    <div>
+                        <span class="eyebrow">AQELIO PLUS</span>
+                        <h2 id="premium-tools-title">Plan smarter</h2>
+                        <p>Turn natural language into tasks and let Aqelio find room in your day.</p>
+                    </div>
+                    <span class="premium-pill">PREMIUM</span>
+                </div>
+
+                <div id="premium-tools-content">
+                <form id="natural-task-form" class="natural-task-form">
+                    <label for="natural-task-input">Quick add in plain English</label>
+                    <div class="natural-task-row">
+                        <input id="natural-task-input" type="text" autocomplete="off" placeholder="Lunch tomorrow at 1 pm" aria-describedby="natural-task-help">
+                        <button class="primary-button" type="submit">Parse task</button>
+                    </div>
+                    <p id="natural-task-help" class="form-help">Try “Study economics tomorrow at 3 pm” or “Call Mom Friday at 10”. This runs on your device and supports common dates and times.</p>
+                    <p id="natural-task-feedback" class="premium-feedback" role="status" aria-live="polite"></p>
+                </form>
+
+                <div class="premium-divider"></div>
+
+                <div class="smart-schedule-block">
+                    <div>
+                        <h3>Automatic time-blocking</h3>
+                        <p>Place one-time unscheduled tasks into open slots without overlapping existing events.</p>
+                    </div>
+                    <div class="schedule-controls">
+                        <label>Schedule date <input id="smart-schedule-date" type="date"></label>
+                        <label>Start <input id="smart-schedule-start" type="time" value="09:00"></label>
+                        <label>End <input id="smart-schedule-end" type="time" value="17:00"></label>
+                    </div>
+                    <button id="smart-schedule-button" class="secondary-button" type="button">Build my schedule</button>
+                    <p id="smart-schedule-feedback" class="premium-feedback" role="status" aria-live="polite"></p>
+                </div>
+
+                <div class="premium-divider"></div>
+
+                <div class="premium-export-grid">
+                    <div>
+                        <h3>Calendar & data</h3>
+                        <p>Export scheduled tasks to a calendar file, or back up your Aqelio data before moving devices.</p>
+                        <div class="premium-actions">
+                            <button id="export-calendar-button" class="secondary-button" type="button">Export calendar (.ics)</button>
+                            <button id="export-backup-button" class="secondary-button" type="button">Back up data</button>
+                            <button id="import-backup-button" class="secondary-button" type="button">Restore backup</button>
+                            <input id="import-backup-file" type="file" accept="application/json,.json" hidden>
+                        </div>
+                        <p id="backup-feedback" class="premium-feedback" role="status" aria-live="polite"></p>
+                    </div>
+                </div>
+
+                <div class="integration-notice">
+                    <strong>Connected services</strong>
+                    <p>Calendar export works now with Google Calendar and other calendar apps. Live cross-device sync and native Google Workspace, Zoom, and Slack connections require a secure cloud backend and provider credentials; this local-only version does not pretend those services are connected.</p>
+                </div>
+                </div><!-- /#premium-tools-content -->
+
+                <div id="premium-locked-screen" class="premium-locked-screen" hidden>
+                    <div class="premium-lock-icon" aria-hidden="true">✦</div>
+                    <span class="eyebrow">AQELIO PREMIUM</span>
+                    <h3>Make room for what matters.</h3>
+                    <p>Unlock smarter planning tools that help you turn ideas into tasks, build your day, and keep your plans portable.</p>
+                    <ul class="premium-benefit-list">
+                        <li><span aria-hidden="true">✓</span> Natural-language task entry</li>
+                        <li><span aria-hidden="true">✓</span> Automatic time-blocking</li>
+                        <li><span aria-hidden="true">✓</span> Calendar export and data backup</li>
+                        <li><span aria-hidden="true">✓</span> Advanced planning tools as Aqelio grows</li>
+                    </ul>
+                    <button id="open-premium-paywall" class="primary-button premium-cta" type="button">Unlock Aqelio Premium</button>
+                    <p class="premium-small-print">Your regular tasks, calendar, focus timer, and categories remain free.</p>
+                </div>
             </section>
 
         </section>
@@ -452,6 +528,53 @@
 </div>
 
 
+<!-- ================= PROFILE SETTINGS ================= -->
+<div id="profile-modal" class="profile-modal" aria-hidden="true">
+    <div id="profile-overlay" class="profile-overlay"></div>
+    <div class="profile-panel" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+        <div class="profile-header">
+            <div>
+                <span class="eyebrow">PERSONALIZE</span>
+                <h2 id="profile-title">Your Aqelio</h2>
+            </div>
+            <button id="close-profile" class="modal-close" type="button" aria-label="Close profile settings">×</button>
+        </div>
+
+        <div class="profile-preview-row">
+            <div id="profile-preview" class="profile-preview">E</div>
+            <div>
+                <strong id="profile-preview-name">Hello, there</strong>
+                <p>Customize how Aqelio greets you.</p>
+            </div>
+        </div>
+
+        <div class="profile-field">
+            <label for="profile-name">Your name</label>
+            <input id="profile-name" type="text" maxlength="30" placeholder="Enter your name" autocomplete="name">
+        </div>
+
+        <div class="profile-field">
+            <label for="profile-color">Icon color</label>
+            <div class="profile-color-row">
+                <input id="profile-color" type="color" value="#078b91" aria-label="Choose icon color">
+                <span id="profile-color-value">#078B91</span>
+            </div>
+        </div>
+
+        <div class="profile-field profile-theme-row">
+            <div>
+                <label for="dark-mode-toggle">Dark mode</label>
+                <p>Use a darker Aqelio theme.</p>
+            </div>
+            <button id="dark-mode-toggle" class="theme-toggle" type="button" role="switch" aria-checked="false">
+                <span></span>
+            </button>
+        </div>
+
+        <button id="save-profile" class="primary-button profile-save-button" type="button">Save Changes</button>
+    </div>
+</div>
+
 <!-- ================= TASK MODAL ================= -->
 
 <div
@@ -653,6 +776,23 @@
                     placeholder="Category name"
                 >
 
+                <div class="category-color-row">
+                    <label for="new-category-color">Category color</label>
+                    <div class="category-color-input-wrap">
+                        <span
+                            id="new-category-color-preview"
+                            aria-hidden="true"
+                            style="display:inline-block;width:20px;height:20px;border-radius:50%;background:#078b91;border:1px solid #d2dfe1;"
+                        ></span>
+                        <input
+                            id="new-category-color"
+                            type="color"
+                            value="#078b91"
+                            aria-label="Choose category color"
+                        >
+                        <span id="new-category-color-value">#078B91</span>
+                    </div>
+                </div>
 
                 <div class="category-form-actions">
 
@@ -751,6 +891,28 @@
 
 </div>
 
+
+<!-- ================= PREMIUM PAYWALL ================= -->
+<div id="premium-paywall-modal" class="premium-paywall-modal" aria-hidden="true">
+    <button class="premium-paywall-backdrop" type="button" data-close-premium-paywall aria-label="Close upgrade window"></button>
+    <section class="premium-paywall-panel" role="dialog" aria-modal="true" aria-labelledby="premium-paywall-title" tabindex="-1">
+        <button id="close-premium-paywall" class="premium-paywall-close" type="button" aria-label="Close">×</button>
+        <div class="premium-lock-icon premium-lock-icon-modal" aria-hidden="true">✦</div>
+        <span class="eyebrow">AQELIO PREMIUM</span>
+        <h2 id="premium-paywall-title">Unlock your best work.</h2>
+        <p class="premium-paywall-subtitle">Less time organizing. More time doing what matters.</p>
+        <ul class="premium-benefit-list premium-modal-benefits">
+            <li><span aria-hidden="true">✓</span> Add tasks using everyday language</li>
+            <li><span aria-hidden="true">✓</span> Automatically time-block your day</li>
+            <li><span aria-hidden="true">✓</span> Export your calendar and back up your data</li>
+            <li><span aria-hidden="true">✓</span> Keep your plans organized in one place</li>
+        </ul>
+        <div class="premium-price"><strong>$4.99</strong><span>/ month</span></div>
+        <p class="premium-payment-note">Payment setup is not connected yet. This screen is a preview; no charge will be made.</p>
+        <button id="premium-upgrade-button" class="primary-button premium-cta" type="button">Upgrade to Premium</button>
+        <button id="premium-later-button" class="secondary-button premium-later-button" type="button">Maybe later</button>
+    </section>
+</div>
 
 <script src="app.js"></script>
 
